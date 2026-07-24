@@ -1,0 +1,218 @@
+import streamlit as st
+import geopandas as gpd
+import folium
+from streamlit_folium import st_folium
+import pandas as pd
+
+# --- Configuração da Página do Streamlit ---
+st.set_page_config(
+    page_title="Bahia: Territórios de Identidade",
+    page_icon="🗺️",
+    layout="wide"
+)
+
+# --- URL dos Dados Geográficos dos Territórios ---
+GEOJSON_TERRITORIOS_URL = "https://raw.githubusercontent.com/CleitonOERocha/Shapefiles/master/Shapefiles/Territorios%20de%20Identidade_BA/Terri_iden_ba_v2.json"
+
+@st.cache_data
+def carregar_geodados(url):
+    """
+    Função para carregar os dados geográficos a partir de uma URL.
+    Retorna um GeoDataFrame do Geopandas.
+    """
+    try:
+        gdf = gpd.read_file(url)
+        return gdf
+    except Exception as e:
+        st.error(f"Erro ao carregar os dados geográficos da URL: {e}")
+        st.error("Por favor, verifique se a URL está correta e acessível.")
+        return None
+
+# --- Carregamento dos Dados ---
+with st.spinner("Carregando dados dos Territórios de Identidade..."):
+    geodados_territorios = carregar_geodados(GEOJSON_TERRITORIOS_URL)
+
+if geodados_territorios is not None:
+    # --- Layout Principal com Sidebar ---
+    st.title("🗺️ Mapa dos Territórios de Identidade da Bahia")
+    st.markdown("Visualização das macrorregiões que agrupam os municípios por similaridades sociais, culturais e econômicas.")
+    
+    # --- Sidebar com Filtros e Pesquisa ---
+    with st.sidebar:
+        st.header("🔍 Filtros e Pesquisa")
+        
+        # Barra de Pesquisa
+        st.subheader("Pesquisar Território")
+        lista_territorios = sorted(geodados_territorios['NM_TI'].unique())
+        
+        # Campo de pesquisa por texto
+        termo_pesquisa = st.text_input(
+            "Digite o nome do território:",
+            placeholder="Ex: Metropolitano de Salvador",
+            help="Digite parte do nome do território para filtrar"
+        )
+        
+        # Filtro por seleção múltipla
+        st.subheader("Filtrar Territórios")
+        territorios_selecionados = st.multiselect(
+            "Selecione os territórios para visualizar:",
+            options=lista_territorios,
+            default=lista_territorios,  # Por padrão, todos estão selecionados
+            help="Selecione um ou mais territórios para filtrar no mapa"
+        )
+        
+        # Filtro por código
+        st.subheader("Filtro por Código")
+        codigos_disponiveis = sorted(geodados_territorios['CD_TI'].unique())
+        codigo_selecionado = st.selectbox(
+            "Filtrar por código do território:",
+            options=["Todos"] + [str(cod) for cod in codigos_disponiveis],
+            help="Selecione um código específico ou 'Todos' para ver todos"
+        )
+        
+        # Botão para limpar filtros
+        if st.button("🔄 Limpar Filtros"):
+            st.rerun()
+    
+    # --- Aplicação dos Filtros ---
+    geodados_filtrados = geodados_territorios.copy()
+    
+    # Filtro por pesquisa de texto
+    if termo_pesquisa:
+        mask_pesquisa = geodados_filtrados['NM_TI'].str.contains(
+            termo_pesquisa, case=False, na=False
+        )
+        geodados_filtrados = geodados_filtrados[mask_pesquisa]
+    
+    # Filtro por territórios selecionados
+    if territorios_selecionados:
+        geodados_filtrados = geodados_filtrados[
+            geodados_filtrados['NM_TI'].isin(territorios_selecionados)
+        ]
+    
+    # Filtro por código
+    if codigo_selecionado != "Todos":
+        geodados_filtrados = geodados_filtrados[
+            geodados_filtrados['CD_TI'] == codigo_selecionado
+        ]
+    
+    # --- Layout Principal com Colunas ---
+    col_mapa, col_info = st.columns([3, 1])
+    
+    with col_mapa:
+        st.subheader("Mapa Interativo")
+        
+        # Informações sobre os filtros aplicados
+        total_territorios = len(geodados_territorios)
+        territorios_exibidos = len(geodados_filtrados)
+        
+        if territorios_exibidos < total_territorios:
+            st.info(f"Exibindo {territorios_exibidos} de {total_territorios} territórios")
+        
+        # --- Criação do Mapa Interativo com Folium ---
+        CENTRO_BAHIA = [-12.97, -41.80]
+        ZOOM_INICIAL = 6
+        
+        mapa_territorios = folium.Map(
+            location=CENTRO_BAHIA, 
+            zoom_start=ZOOM_INICIAL, 
+            tiles="CartoDB positron"
+        )
+        
+        # Adiciona uma camada GeoJson para os territórios filtrados
+        if not geodados_filtrados.empty:
+            folium.GeoJson(
+                geodados_filtrados,
+                style_function=lambda feature: {
+                    'fillColor': '#1E90FF',  # Azul (DodgerBlue)
+                    'color': 'white',
+                    'weight': 2.5,
+                    'fillOpacity': 0.6,
+                },
+                highlight_function=lambda x: {
+                    'weight': 4, 
+                    'color': '#FFDE59', 
+                    'fillOpacity': 0.8
+                },
+                tooltip=folium.GeoJsonTooltip(
+                    fields=['NM_TI', 'CD_TI'],
+                    aliases=['Território:', 'Código:'],
+                    style=(
+                        "background-color: white; color: #333333; "
+                        "font-family: arial; font-size: 14px; padding: 10px;"
+                    )
+                )
+            ).add_to(mapa_territorios)
+        
+        # Exibição do mapa
+        mapa_data = st_folium(mapa_territorios, width='100%', height=600)
+    
+    with col_info:
+        st.subheader("📊 Informações")
+        
+        # Estatísticas gerais
+        st.metric("Total de Territórios", total_territorios)
+        st.metric("Territórios Exibidos", territorios_exibidos)
+        
+        # Informações sobre o território selecionado no mapa
+        if mapa_data['last_object_clicked_tooltip']:
+            st.subheader("🎯 Território Selecionado")
+            tooltip_data = mapa_data['last_object_clicked_tooltip']
+            if 'Território:' in str(tooltip_data):
+                st.write("**Nome:**", tooltip_data.get('Território:', 'N/A'))
+                st.write("**Código:**", tooltip_data.get('Código:', 'N/A'))
+        
+        # Lista dos territórios atualmente exibidos
+        if not geodados_filtrados.empty:
+            st.subheader("📋 Territórios Exibidos")
+            territorios_lista = geodados_filtrados[['NM_TI', 'CD_TI']].sort_values('NM_TI')
+            for _, row in territorios_lista.iterrows():
+                st.write(f"• {row['NM_TI']} (Cód: {row['CD_TI']})")
+    
+    # --- Seção de Dados Tabulares ---
+    st.markdown("---")
+    st.subheader("📋 Dados dos Territórios")
+    
+    # Preparação dos dados para exibição
+    if not geodados_filtrados.empty:
+        dados_display = geodados_filtrados[['CD_TI', 'NM_TI']].copy()
+        dados_display = dados_display.rename(columns={
+            'CD_TI': 'Código',
+            'NM_TI': 'Nome do Território'
+        }).sort_values('Nome do Território').reset_index(drop=True)
+        
+        # Opções de visualização da tabela
+        col_opcoes1, col_opcoes2 = st.columns(2)
+        with col_opcoes1:
+            mostrar_indices = st.checkbox("Mostrar índices da tabela", value=False)
+        with col_opcoes2:
+            altura_tabela = st.selectbox(
+                "Altura da tabela:",
+                options=[300, 400, 500, 600],
+                index=1
+            )
+        
+        # Exibição da tabela
+        st.dataframe(
+            dados_display, 
+            use_container_width=True,
+            height=altura_tabela,
+            hide_index=not mostrar_indices
+        )
+        
+        # Opção de download dos dados filtrados
+        csv_data = dados_display.to_csv(index=False)
+        st.download_button(
+            label="📥 Baixar dados filtrados (CSV)",
+            data=csv_data,
+            file_name=f"territorios_bahia_filtrados.csv",
+            mime="text/csv"
+        )
+    else:
+        st.warning("Nenhum território encontrado com os filtros aplicados.")
+        st.info("Tente ajustar os filtros na barra lateral para ver os resultados.")
+
+else:
+    st.error("❌ Não foi possível carregar os dados para exibir o mapa.")
+    st.info("Verifique sua conexão com a internet e tente novamente.")
+
