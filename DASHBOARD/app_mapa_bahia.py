@@ -186,11 +186,14 @@ def exibir_conteudo_ficha(row, show_criteria=True):
 # -------------------------------------------------
 # CARREGAMENTO
 # -------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 @st.cache_data
 def carregar_dados():
     try:
         # Lê a primeira aba da planilha, independente do nome
-        df = pd.read_excel("base_de_dados_IGs.xlsx", sheet_name=0)
+        arquivo_excel = os.path.join(BASE_DIR, "base_de_dados_IGs.xlsx")
+    df = pd.read_excel(arquivo_excel, sheet_name=0)
         ausentes = [c for c in COLUNAS_ESPERADAS if c not in df.columns]
         if ausentes:
             st.error(f"⚠️ Colunas ausentes: {ausentes}")
@@ -284,7 +287,10 @@ def carregar_dados():
         # -------------------------------------------------
         df_of = pd.DataFrame()
         try:
-            df_of = pd.read_excel("base_de_dados_IGs.xlsx", sheet_name="BD_IGs_concedida_analise")
+           df_of = pd.read_excel(
+    arquivo_excel,
+    sheet_name="BD_IGs_concedida_analise"
+        )
             df_of = df_of.dropna(subset=['nome_produto']).copy()
             if 'geometria_espacial' in df_of.columns:
                 df_of[['latitude','longitude']] = df_of['geometria_espacial'].apply(
@@ -316,7 +322,7 @@ def carregar_dados():
 def carregar_territorios():
     url = ("https://raw.githubusercontent.com/CleitonOERocha/Shapefiles/master/"
            "Shapefiles/Territorios%20de%20Identidade_BA/Terri_iden_ba_v2.json")
-    cache_file = "territorios_ba.json"
+    cache_file = os.path.join(BASE_DIR, "territorios_ba.json")
     try:
         if os.path.exists(cache_file):
             gdf = gpd.read_file(cache_file)
