@@ -40,8 +40,6 @@ Banco_de_Dados_IG_Bahia/
 
 **Vinícius de Jesus Almeida Lima**
 
-**e**
-
 **Luís Oscar Silva Martins**
 
 Programa de Pós-Graduação em Propriedade Intelectual e Transferência de Tecnologia para Inovação (PROFNIT)
