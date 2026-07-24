@@ -6,11 +6,27 @@ from streamlit_folium import st_folium
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import re
+import numpy as np
 
 st.set_page_config(
     page_title="IGs Bahia – Diagnóstico Territorial",
     layout="wide",
     initial_sidebar_state="collapsed"
+)
+
+# -------------------------------------------------
+# ESTILO DA SIDEBAR
+# -------------------------------------------------
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"]{
+        background:#0d1117;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
 # -------------------------------------------------
@@ -73,21 +89,28 @@ COLUNAS_ESPERADAS = [
 # -------------------------------------------------
 # FUNÇÕES
 # -------------------------------------------------
-import re
 def macro_tipo(val):
     v = str(val).lower()
-    if 'ig registrada' in v: return 'IG Registrada'
-    if 'artesanato' in v: return 'Artesanato'
-    if any(x in v for x in ['bebida','vinho','cachaça','licor','destilado']): return 'Bebidas'
-    if 'agroalimentar' in v or 'derivados' in v: return 'Agroalimentar'
-    if 'agrícola' in v or 'agricola' in v: return 'Agrícola'
-    if any(x in v for x in ['serviço','servico','turismo']): return 'Serviços'
+    if 'ig registrada' in v:
+        return 'IG Registrada'
+    if 'artesanato' in v:
+        return 'Artesanato'
+    if any(x in v for x in ['bebida','vinho','cachaça','licor','destilado']):
+        return 'Bebidas'
+    if 'agroalimentar' in v or 'derivados' in v:
+        return 'Agroalimentar'
+    if 'agrícola' in v or 'agricola' in v:
+        return 'Agrícola'
+    if any(x in v for x in ['serviço','servico','turismo']):
+        return 'Serviços'
     return 'Outros'
 
 def macro_modalidade(val):
     v = str(val).lower().strip()
-    if 'denominação de origem' in v or v == 'do': return 'DO'
-    if 'indicação de procedência' in v or v == 'ip': return 'IP'
+    if 'denominação de origem' in v or v == 'do':
+        return 'DO'
+    if 'indicação de procedência' in v or v == 'ip':
+        return 'IP'
     return 'Potencial'
 
 def extrair_coords(val):
@@ -124,7 +147,8 @@ def normalizar_territorio(val):
     return normalizar_territorios(val)[0] if normalizar_territorios(val) else str(val)
 
 def limpar(val):
-    if pd.isna(val): return None
+    if pd.isna(val):
+        return None
     s = str(val).strip()
     return None if s.lower() in ('nan','','none') else s
 
@@ -191,18 +215,29 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 @st.cache_data
 def carregar_dados():
     try:
-        # Lê a primeira aba da planilha, independente do nome
         arquivo_excel = os.path.join(BASE_DIR, "base_de_dados_IGs.xlsx")
-    df = pd.read_excel(arquivo_excel, sheet_name=0)
+
+        # Lê a primeira aba da planilha, independente do nome
+        df = pd.read_excel(arquivo_excel, sheet_name=0)
+
+        # Garante que todas as colunas esperadas existam
+        for c in COLUNAS_ESPERADAS:
+            if c not in df.columns:
+                df[c] = None
+
         ausentes = [c for c in COLUNAS_ESPERADAS if c not in df.columns]
         if ausentes:
             st.error(f"⚠️ Colunas ausentes: {ausentes}")
-            return pd.DataFrame(), pd.DataFrame()
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
         df = df[df['nome_produto'].astype(str).str.lower() != 'nome_produto'].copy()
         df = df.dropna(subset=['nome_produto']).copy()
-        df[['latitude','longitude']] = df['geometria_espacial'].apply(
-            lambda v: pd.Series(extrair_coords(v)))
+
+        # Extração de coordenadas com fallback
+        df[['latitude', 'longitude']] = df['geometria_espacial'].apply(
+            lambda x: pd.Series(extrair_coords(x))
+        )
+
         df['macro_tipo']       = df['tipo_produto'].apply(macro_tipo)
         df['macro_modalidade'] = df['modalidade_ig'].apply(macro_modalidade)
         df['territorio_norm']  = df['territorio_identidade'].apply(normalizar_territorio)
@@ -211,33 +246,25 @@ def carregar_dados():
 
         def agregar(grupo):
             # --- Lógica para criar um nome final descritivo ---
-            # Pega o nome do grupo, que é a nossa chave de agrupamento
             nome_final = grupo.name
 
-            # Se o nome do grupo não parece ter uma localidade, constrói um.
-            # Heurística: verifica se o nome contém "de", "do", "da".
             if not any(p in nome_final.lower() for p in [' de ', ' do ', ' da ']):
-                # Pega a primeira linha do grupo para extrair o município
                 primeira_linha = grupo.iloc[0]
                 municipios = primeira_linha.get('municipios_abrangidos', '')
                 if municipios and isinstance(municipios, str):
-                    # Adiciona o primeiro município ao nome para clareza
                     primeiro_municipio = municipios.split(',')[0].strip()
-                    # Evita adicionar se já estiver contido (ignorando caso)
                     if primeiro_municipio.lower() not in nome_final.lower():
                         nome_final = f"{nome_final} de {primeiro_municipio}"
-            # ----------------------------------------------------
 
             principal = grupo.copy()
-            # --- Cria um score de prioridade para escolher a melhor linha base ---
-            # Prioriza linhas com status oficial (Concedida > Em análise)
+
             def priority_score(row):
                 score = row.notna().sum()
                 status = str(row.get('status_diagnostico', '')).lower()
                 if 'concedid' in status:
-                    score += 100 # Prioridade máxima
+                    score += 100
                 elif 'pedido em analise' in status or 'em analise' in status:
-                    score += 50  # Prioridade média
+                    score += 50
                 return score
 
             principal['_p'] = principal.apply(priority_score, axis=1)
@@ -254,7 +281,7 @@ def carregar_dados():
                     estudos.append({'ano': int(ano) if pd.notna(ano) else None,
                                     'fonte': fonte, 'link': link, 'referencia_abnt': ref})
             return pd.Series({
-                'nome_produto':          nome_final, # Usa o nome do grupo ou o nome construído
+                'nome_produto':          nome_final,
                 'territorio_identidade': base['territorio_identidade'],
                 'territorio_norm':       base['territorio_norm'],
                 'municipios_abrangidos': base['municipios_abrangidos'],
@@ -275,45 +302,69 @@ def carregar_dados():
                 'estudos':               estudos,
             })
 
-        # Cria uma chave de agrupamento mais inteligente
-        # Remove parênteses e espaços extras para agrupar variações do mesmo nome
         df['chave_agrupamento'] = df['nome_produto'].str.split('(').str[0].str.strip()
 
-        df_ag = (df.groupby('chave_agrupamento', sort=False)
-                   .apply(agregar).reset_index(drop=True))
+        df_ag = (
+            df.groupby('chave_agrupamento', sort=False, group_keys=False)
+              .apply(agregar)
+              .reset_index(drop=True)
+        )
 
         # -------------------------------------------------
         # Aba com as IGs oficiais concedidas no INPI
         # -------------------------------------------------
         df_of = pd.DataFrame()
+
         try:
-           df_of = pd.read_excel(
-    arquivo_excel,
-    sheet_name="BD_IGs_concedida_analise"
-        )
-            df_of = df_of.dropna(subset=['nome_produto']).copy()
+            df_of = pd.read_excel(
+                arquivo_excel,
+                sheet_name="BD_IGs_concedida_analise"
+            )
+
+            df_of = df_of.dropna(
+                subset=['nome_produto']
+            ).copy()
+
             if 'geometria_espacial' in df_of.columns:
-                df_of[['latitude','longitude']] = df_of['geometria_espacial'].apply(
-                    lambda v: pd.Series(extrair_coords(v)))
+                df_of[['latitude', 'longitude']] = df_of[
+                    'geometria_espacial'
+                ].apply(
+                    lambda v: pd.Series(extrair_coords(v))
+                )
+
             if 'modalidade_ig' in df_of.columns:
-                df_of['macro_modalidade'] = df_of['modalidade_ig'].apply(macro_modalidade)
+                df_of['macro_modalidade'] = (
+                    df_of['modalidade_ig']
+                    .apply(macro_modalidade)
+                )
+
             if 'ano' in df_of.columns:
-                df_of['ano'] = pd.to_numeric(df_of['ano'], errors='coerce')
+                df_of['ano'] = pd.to_numeric(
+                    df_of['ano'],
+                    errors='coerce'
+                )
+
         except Exception as e:
-            st.warning(f"⚠️ Não foi possível ler a aba 'BD_IGs_concedida_analise': {e}")
+            st.warning(
+                f"⚠️ Não foi possível ler a aba 'BD_IGs_concedida_analise': {e}"
+            )
 
         return df, df_ag, df_of
+
     except FileNotFoundError:
         st.error("❌ Arquivo 'base_de_dados_IGs.xlsx' não encontrado.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
     except PermissionError:
         st.error("❌ Permissão Negada para ler o arquivo 'base_de_dados_IGs.xlsx'.")
         st.warning("**SOLUÇÃO:** Por favor, **feche o arquivo no Microsoft Excel** e recarregue esta página.")
         st.info("O Excel bloqueia o arquivo enquanto está aberto, impedindo a leitura pelo dashboard.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
     except ValueError as e:
         st.error(f"❌ Erro de Valor na planilha: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
     except Exception as e:
         st.error(f"❌ Erro inesperado ao carregar os dados: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
@@ -338,12 +389,17 @@ df_raw, df_base, df_oficial = carregar_dados()
 territorios_ba   = carregar_territorios()
 
 # Calcula IGs oficiais (Concedidas) a partir da aba dedicada
-# 'BD_IGs_concedida_analise', que é a fonte de verdade para esse status
 igs_oficiais = df_oficial if not df_oficial.empty else pd.DataFrame()
+
+n_concedidas = 0
 if not igs_oficiais.empty and 'status_diagnostico' in igs_oficiais.columns:
-    n_concedidas = len(igs_oficiais[igs_oficiais['status_diagnostico'].str.contains('Concedid', na=False, case=False)])
-else:
-    n_concedidas = 0
+    n_concedidas = len(
+        igs_oficiais[
+            igs_oficiais['status_diagnostico']
+            .astype(str)
+            .str.contains('Concedid', na=False, case=False)
+        ]
+    )
 
 def selecionar_coluna_nome_ti(gdf):
     """Escolhe a coluna textual do nome do território, evitando códigos numéricos."""
@@ -435,16 +491,14 @@ with st.sidebar:
     df_filtrado = pd.DataFrame()
 
     if not df_base.empty:
-        # Lista de territórios para o selectbox: nomes originais + formatação para exibição
         lista_ti_original = sorted(df_base['territorio_identidade'].dropna().unique().tolist())
-        # Mapeia nome original -> formato com número (tenta extrair o primeiro território para formatação)
+
         def get_display_name(orig):
             prim = normalizar_territorios(orig)[0]
             return formatar_ti(prim) if prim in NUMERACAO_TI else orig
+
         lista_ti_display = [get_display_name(t) for t in lista_ti_original]
-        # Cria dicionário para mapear escolha de volta ao original
         display_to_original = {d: o for d, o in zip(lista_ti_display, lista_ti_original)}
-        # Adiciona "Todos" no início
         opcoes_display = ["Todos"] + lista_ti_display
         ti_sel_display = st.selectbox("Território de Identidade", opcoes_display)
         if ti_sel_display == "Todos":
@@ -465,7 +519,11 @@ with st.sidebar:
 
         df_filtrado = df_base.copy()
         if ti_sel != "Todos":
-            df_filtrado = df_filtrado[df_filtrado['territorio_identidade'] == ti_sel]
+            df_filtrado = df_filtrado[
+                df_filtrado['territorio_identidade']
+                .apply(lambda x: ti_sel in normalizar_territorios(x))
+            ]
+
         if macro_sel:
             df_filtrado = df_filtrado[df_filtrado['macro_tipo'].isin(macro_sel)]
         if modal_sel:
@@ -503,16 +561,11 @@ st.divider()
 # -------------------------------------------------
 # KPIs
 # -------------------------------------------------
-# --- Calcula os totais a partir da base de dados completa (df_base) ---
 total_estudos = int(df_base['n_estudos'].sum()) if not df_base.empty else 0
 n_multi_estudos = len(df_base[df_base['n_estudos'] > 1]) if not df_base.empty else 0
 n_ti_coberto = len(territorios_cobertos)
 cobertura_pct = round(n_ti_coberto / 27 * 100)
 
-# --- Separa os ativos por status ---
-# Alguns produtos já oficializados (Concedida/Em análise) também aparecem na
-# base principal com esse status descrito em texto — são excluídos aqui dos
-# "potenciais" para não contar o mesmo ativo duas vezes.
 if not df_base.empty:
     mask_ja_oficial_no_base = df_base['status_diagnostico'].str.contains(
         r'Concedid|em\s+an[aá]lise', na=False, case=False, regex=True)
@@ -521,21 +574,16 @@ else:
     df_potenciais = pd.DataFrame()
 n_potenciais = len(df_potenciais)
 
-# --- Detalha os potenciais por vocação ---
 n_ip_pot = len(df_potenciais[df_potenciais['macro_modalidade'] == 'IP']) if not df_potenciais.empty else 0
 n_do_pot = len(df_potenciais[df_potenciais['macro_modalidade'] == 'DO']) if not df_potenciais.empty else 0
 
-# Potenciais cujo diagnóstico menciona notoriedade (reconhecimento/qualidade
-# já perceptíveis, requisito relevante para IP/DO)
 n_notoriedade = (len(df_potenciais[df_potenciais['status_diagnostico'].str.contains(
     'notoriedade', na=False, case=False)]) if not df_potenciais.empty else 0)
 pct_notoriedade = round(n_notoriedade / n_potenciais * 100) if n_potenciais > 0 else 0
 
-# --- Top 3 ativos (IGs) com mais estudos referenciados ---
 top3_estudos = (df_base.nlargest(3, 'n_estudos')[['nome_produto', 'n_estudos']].values.tolist()
                 if not df_base.empty else [])
 
-# --- Exibição dos KPIs ---
 st.markdown("##### Panorama Geral do Mapeamento")
 k1, k2, k3, k4 = st.columns(4)
 kpis_row1 = [
@@ -607,7 +655,6 @@ with aba1:
 
     mapa = folium.Map(location=[-12.5,-41.5], zoom_start=6, tiles="cartodbpositron")
 
-    # Conjunto de territórios cobertos (nomes originais) para destacar
     ti_com = set()
     cont_ti = {}
     if not df_filtrado.empty:
@@ -644,7 +691,6 @@ with aba1:
         for _, row in df_filtrado[df_filtrado['latitude'].notna() &
                                   df_filtrado['longitude'].notna()].iterrows():
             try:
-                # Lógica para IGs Registradas (concedidas no INPI)
                 if row['macro_tipo'] == 'IG Registrada':
                     tooltip_ig = f"⭐ {row['nome_produto']}"
                     popup_ig = f"""<div style='font-family:sans-serif;min-width:210px'>
@@ -658,7 +704,6 @@ with aba1:
                                   tooltip=tooltip_ig,
                                   icon=folium.Icon(color='darkgreen', icon='star', prefix='glyphicon')
                     ).add_to(mapa)
-                # Lógica para Potenciais IGs (da planilha)
                 else:
                     n = int(row.get('n_estudos', 1))
                     cor = 'red' if n >= 3 else ('orange' if n == 2 else COR.get(row['macro_tipo'], 'gray'))
@@ -673,7 +718,8 @@ with aba1:
                                   tooltip=f"📌 {row['nome_produto']} · {row['macro_tipo']} · {n} {'estudos' if n > 1 else 'estudo'}",
                                   icon=folium.Icon(color=cor, icon='leaf', prefix='glyphicon')
                     ).add_to(mapa)
-            except: continue
+            except:
+                continue
 
     st_folium(mapa, use_container_width=True, height=560)
 
@@ -808,11 +854,9 @@ with aba3:
             ordem = st.selectbox("Ordenar por",
                                  ["Notoriedade (mais estudos primeiro)", "Nome", "Território"])
 
-        # Lógica de AGRUPAMENTO para a visualização por Território
         if ordem == "Território":
             st.caption("Clique em um território para expandir e ver os ativos. Produtos com mais de um território aparecem em cada um deles.")
 
-            # Mapeia cada território a todas as linhas que o mencionam (principal ou secundário)
             territorios_unicos = sorted(territorios_cobertos, key=lambda ti: NUMERACAO_TI.get(ti, 99))
 
             for ti in territorios_unicos:
@@ -824,17 +868,14 @@ with aba3:
                     continue
                 label_expander = f"{formatar_ti(ti)} ({contagem} {'ativo' if contagem == 1 else 'ativos'})"
 
-                # Expander para cada Território
                 with st.expander(label_expander):
                     for _, row in df_ti.iterrows():
                         n = int(row.get('n_estudos', 1))
                         badge = "🔴 Alta notoriedade" if n >= 3 else "🟡 Moderada" if n == 2 else "⚪ 1 estudo"
 
-                        # Expander para cada Possível IG dentro do Território
                         with st.expander(f"📌 {row['nome_produto']} · {badge}"):
                             exibir_conteudo_ficha(row, show_criteria=False)
-        
-        # Lógica original de PAGINAÇÃO para as outras ordenações
+
         else:
             df_ord = (df_filtrado.sort_values('n_estudos', ascending=False) if "Notoriedade" in ordem else
                       df_filtrado.sort_values('nome_produto'))
@@ -881,15 +922,22 @@ with aba4:
     st.caption("Fonte: INPI – Instituto Nacional da Propriedade Industrial (2025)")
     st.divider()
 
-    concedidas = igs_oficiais[igs_oficiais['status_diagnostico'].str.contains('Concedid', na=False, case=False)].sort_values('nome_produto')
+    if not igs_oficiais.empty and 'status_diagnostico' in igs_oficiais.columns:
+        concedidas = igs_oficiais[
+            igs_oficiais['status_diagnostico']
+            .astype(str)
+            .str.contains('Concedid', case=False, na=False)
+        ].sort_values('nome_produto')
+    else:
+        concedidas = pd.DataFrame()
 
     st.markdown(f"### ✅ Concedidas ({len(concedidas)})")
     col_c1, col_c2 = st.columns(2)
     for i, (_, ig) in enumerate(concedidas.iterrows()):
         col_atual = col_c1 if i % 2 == 0 else col_c2
         with col_atual:
-            tag_m = '<span class="tag-do">DO</span>' if ig['macro_modalidade']=='DO' else '<span class="tag-ip">IP</span>'
-            territorio_fmt = formatar_ti(ig['territorio_identidade']) if ig['territorio_identidade'] in NUMERACAO_TI else ig['territorio_identidade']
+            tag_m = '<span class="tag-do">DO</span>' if ig.get('macro_modalidade') == 'DO' else '<span class="tag-ip">IP</span>'
+            territorio_fmt = formatar_ti(ig['territorio_identidade']) if ig.get('territorio_identidade') in NUMERACAO_TI else ig.get('territorio_identidade', '')
             ano_str = f"Concedida em {int(ig['ano'])}" if pd.notna(ig.get('ano')) else 'Concedida'
             st.markdown(f"""<div class="ig-card-ok">
                 <b style='color:#E6EDF3;font-size:13px'>{ig['nome_produto']}</b><br>
@@ -968,7 +1016,7 @@ with aba5:
         border-left:4px solid #F2B705;font-size:12px;color:#ccc;'>
         <b style='color:#F2B705'>📋 Como citar este produto tecnológico</b><br><br>
         LIMA, Vinícius de Jesus Almeida.
-        <i><b>Prospecção de indicações geográficas na Bahia:<b> mapeamento por Territórios de Identidade.</i>
+        <i><b>Prospecção de indicações geográficas na Bahia:</b> mapeamento por Territórios de Identidade.</i>
         Dashboard — produto tecnológico do Trabalho de Conclusão de Curso. PROFNIT/UFRB. Feira de Santana, 2026.
     </div>""", unsafe_allow_html=True)
 
