@@ -429,6 +429,12 @@ if not igs_oficiais.empty and 'status_diagnostico' in igs_oficiais.columns:
 else:
     n_concedidas = 0
 
+concedidas = pd.DataFrame()
+if not igs_oficiais.empty and 'status_diagnostico' in igs_oficiais.columns:
+    concedidas = igs_oficiais[igs_oficiais['status_diagnostico'].str.contains('Concedid', na=False, case=False)].copy()
+    if 'nome_produto' in concedidas.columns:
+        concedidas = concedidas.sort_values('nome_produto').reset_index(drop=True)
+
 def selecionar_coluna_nome_ti(gdf):
     """Escolhe a coluna textual do nome do território, evitando códigos numéricos."""
     if gdf.empty:
@@ -965,21 +971,26 @@ with aba4:
     st.caption("Fonte: INPI – Instituto Nacional da Propriedade Industrial (2025)")
     st.divider()
 
-    concedidas = igs_oficiais[igs_oficiais['status_diagnostico'].str.contains('Concedid', na=False, case=False)].sort_values('nome_produto')
-
-    st.markdown(f"### ✅ Concedidas ({len(concedidas)})")
-    col_c1, col_c2 = st.columns(2)
-    for i, (_, ig) in enumerate(concedidas.iterrows()):
-        col_atual = col_c1 if i % 2 == 0 else col_c2
-        with col_atual:
-            tag_m = '<span class="tag-do">DO</span>' if ig['macro_modalidade']=='DO' else '<span class="tag-ip">IP</span>'
-            territorio_fmt = formatar_ti(ig['territorio_identidade']) if ig['territorio_identidade'] in NUMERACAO_TI else ig['territorio_identidade']
-            ano_str = f"Concedida em {int(ig['ano'])}" if pd.notna(ig.get('ano')) else 'Concedida'
-            st.markdown(f"""<div class="ig-card-ok">
-                <b style='color:#E6EDF3;font-size:13px'>{ig['nome_produto']}</b><br>
-                {tag_m} &nbsp;<span style='color:#6E7681;font-size:12px'>{ano_str}</span><br>
-                <span style='color:#8B949E;font-size:12px'>📍 {territorio_fmt}</span>
-            </div>""", unsafe_allow_html=True)
+    if concedidas.empty:
+        st.info("Ainda não há registros de IGs concedidas disponíveis nessa base. Isso pode acontecer quando a aba de origem está ausente ou sem a coluna esperada.")
+    else:
+        st.markdown(f"### ✅ Concedidas ({len(concedidas)})")
+        col_c1, col_c2 = st.columns(2)
+        for i, (_, ig) in enumerate(concedidas.iterrows()):
+            col_atual = col_c1 if i % 2 == 0 else col_c2
+            with col_atual:
+                if 'macro_modalidade' in ig.index and ig.get('macro_modalidade') == 'DO':
+                    tag_m = '<span class="tag-do">DO</span>'
+                else:
+                    tag_m = '<span class="tag-ip">IP</span>'
+                territorio = ig.get('territorio_identidade', '')
+                territorio_fmt = formatar_ti(territorio) if territorio in NUMERACAO_TI else territorio
+                ano_str = f"Concedida em {int(ig['ano'])}" if pd.notna(ig.get('ano')) else 'Concedida'
+                st.markdown(f"""<div class="ig-card-ok">
+                    <b style='color:#E6EDF3;font-size:13px'>{ig.get('nome_produto', '')}</b><br>
+                    {tag_m} &nbsp;<span style='color:#6E7681;font-size:12px'>{ano_str}</span><br>
+                    <span style='color:#8B949E;font-size:12px'>📍 {territorio_fmt}</span>
+                </div>""", unsafe_allow_html=True)
 
     st.divider()
     total_pot = n_potenciais
