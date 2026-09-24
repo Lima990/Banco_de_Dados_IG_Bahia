@@ -945,18 +945,18 @@ with aba4:
                 <span style='color:#8B949E;font-size:12px'>📍 {territorio_fmt}</span>
             </div>""", unsafe_allow_html=True)
 
-       st.divider()
+    st.divider()
     total_pot = n_potenciais
     st.markdown("**Contexto: registradas × potenciais mapeados por este TCC**")
+
     fig_ctx = go.Figure(go.Bar(
-        x=['IGs Concedidas','Potenciais Mapeados (TCC)'],
+        x=['IGs Concedidas', 'Potenciais Mapeados (TCC)'],
         y=[len(concedidas), total_pot],
-        marker_color=['#56d364','#F2B705'],
+        marker_color=['#56d364', '#F2B705'],
         text=[len(concedidas), total_pot],
-        textposition='outside', width=[0.4,0.4]
+        textposition='outside', width=[0.4, 0.4]
     ))
 
-    # Cálculo dinâmico da razão (evita texto hardcoded)
     if len(concedidas) > 0:
         razao = total_pot / len(concedidas)
         razao_str = f"{razao:.1f}".rstrip('0').rstrip('.') if razao % 1 else f"{razao:.0f}"
