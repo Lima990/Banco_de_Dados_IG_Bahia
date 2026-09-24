@@ -6,20 +6,13 @@ from streamlit_folium import st_folium
 import plotly.express as px
 import plotly.graph_objects as go
 import os
-from urllib.request import urlopen
-from urllib.error import HTTPError, URLError
+from sqlalchemy import create_engine
 
 st.set_page_config(
     page_title="IGs Bahia – Diagnóstico Territorial",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
-
-ARQUIVO_PLANILHA = "base_de_dados_IGs.xlsx"
-URLS_PLANILHA = [
-    "https://raw.githubusercontent.com/Lima990/Banco_de_Dados_IG_Bahia/main/DASHBOARD/base_de_dados_IGs.xlsx",
-    "https://raw.githubusercontent.com/Lima990/Banco_de_Dados_IG_Bahia/main/DASHBOARD/base_de_dados_IGs.csv",
-]
 
 # -------------------------------------------------
 # NUMERAÇÃO OFICIAL DOS 27 TIs (conforme SEI)
@@ -234,20 +227,26 @@ def exibir_conteudo_ficha(row, show_criteria=True):
 # -------------------------------------------------
 # CARREGAMENTO
 # -------------------------------------------------
-def obter_planilha_do_repositorio():
-    """Baixa a planilha diretamente do repositório GitHub oficial da base."""
-    for url in URLS_PLANILHA:
+@st.cache_resource
+def obter_conexao_postgres():
+    database_url = os.getenv('DATABASE_URL')
+    if not database_url:
         try:
-            with urlopen(url, timeout=30) as resposta:
-                if resposta.status == 200:
-                    os.makedirs("dados", exist_ok=True)
-                    destino = os.path.join("dados", os.path.basename(url))
-                    with open(destino, "wb") as arq:
-                        arq.write(resposta.read())
-                    return destino
-        except (HTTPError, URLError, TimeoutError, OSError):
-            continue
-    return None
+            database_url = st.secrets['DATABASE_URL']
+        except Exception:
+            database_url = None
+    if not database_url:
+        raise RuntimeError('DATABASE_URL não foi configurada.')
+    return create_engine(database_url, pool_pre_ping=True)
+
+
+def carregar_tabelas_postgres():
+    engine = obter_conexao_postgres()
+    estudos = pd.read_sql_query(
+        'SELECT * FROM estudos_igs ORDER BY id', engine)
+    concedidas = pd.read_sql_query(
+        'SELECT * FROM igs_concedidas ORDER BY id', engine)
+    return estudos, concedidas
 
 
 def auditar_estudos(df_raw, df_ativos=None):
@@ -283,17 +282,8 @@ def auditar_estudos(df_raw, df_ativos=None):
 
 @st.cache_data
 def carregar_dados():
-    planilha = obter_planilha_do_repositorio()
     try:
-        if planilha is None:
-            st.warning(
-                "⚠️ Não foi possível carregar a planilha diretamente do repositório GitHub. "
-                "Verifique se a base continua pública no repo oficial."
-            )
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
-        # Lê a primeira aba da planilha, independente do nome
-        df = pd.read_excel(planilha, sheet_name=0)
+        df, df_of = carregar_tabelas_postgres()
         ausentes = [c for c in COLUNAS_ESPERADAS if c not in df.columns]
         if ausentes:
             st.error(f"⚠️ Colunas ausentes: {ausentes}")
@@ -391,37 +381,21 @@ def carregar_dados():
         df_ag = (df.groupby('chave_agrupamento', sort=False)
                    .apply(agregar).reset_index(drop=True))
 
-        # -------------------------------------------------
-        # Aba com as IGs oficiais concedidas no INPI
-        # -------------------------------------------------
-        df_of = pd.DataFrame()
-        try:
-            df_of = pd.read_excel(planilha, sheet_name="BD_IGs_concedida_analise")
-            df_of = df_of.dropna(subset=['nome_produto']).copy()
-            if 'geometria_espacial' in df_of.columns:
-                df_of[['latitude','longitude']] = df_of['geometria_espacial'].apply(
-                    lambda v: pd.Series(extrair_coords(v)))
-            if 'modalidade_ig' in df_of.columns:
-                df_of['macro_modalidade'] = df_of['modalidade_ig'].apply(macro_modalidade)
-            if 'ano' in df_of.columns:
-                df_of['ano'] = pd.to_numeric(df_of['ano'], errors='coerce')
-        except Exception as e:
-            st.warning(f"⚠️ Não foi possível ler a aba 'BD_IGs_concedida_analise': {e}")
+        df_of = df_of.dropna(subset=['nome_produto']).copy()
+        if 'geometria_espacial' in df_of.columns:
+            df_of[['latitude','longitude']] = df_of['geometria_espacial'].apply(
+                lambda v: pd.Series(extrair_coords(v)))
+        if 'modalidade_ig' in df_of.columns:
+            df_of['macro_modalidade'] = df_of['modalidade_ig'].apply(macro_modalidade)
+        if 'ano' in df_of.columns:
+            df_of['ano'] = pd.to_numeric(df_of['ano'], errors='coerce')
 
         return df, df_ag, df_of
-    except FileNotFoundError:
-        st.error("❌ Arquivo 'base_de_dados_IGs.xlsx' não encontrado.")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    except PermissionError:
-        st.error("❌ Permissão Negada para ler o arquivo 'base_de_dados_IGs.xlsx'.")
-        st.warning("**SOLUÇÃO:** Por favor, **feche o arquivo no Microsoft Excel** e recarregue esta página.")
-        st.info("O Excel bloqueia o arquivo enquanto está aberto, impedindo a leitura pelo dashboard.")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    except ValueError as e:
-        st.error(f"❌ Erro de Valor na planilha: {e}")
+    except RuntimeError as e:
+        st.error(f"❌ Configuração do banco: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
-        st.error(f"❌ Erro inesperado ao carregar os dados: {e}")
+        st.error(f"❌ Não foi possível consultar o PostgreSQL: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 @st.cache_data
@@ -697,7 +671,7 @@ with k8:
         linhas_top3 += (f"<div style='display:flex;justify-content:space-between;gap:10px;"
                          f"align-items:center;font-size:10px;margin-top:2px;line-height:1.2;' title='{nome}'>"
                  f"<span style='color:#ccc;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>{i}º · {nome_curto}</span>"
-                 f"<span style='color:#F2B705;font-weight:600;flex-shrink:0;white-space:nowrap;'>{int(qtd)} estudos</span></div>")
+                         f"<span style='color:#F2B705;font-weight:600;flex-shrink:0;white-space:nowrap;'>· {int(qtd)} estudos</span></div>")
     if not linhas_top3:
         linhas_top3 = "<div style='font-size:10px;color:#6E7681;margin-top:2px;'>Sem dados</div>"
     st.markdown(f"""<div class="kpi-card" style="text-align:left;">

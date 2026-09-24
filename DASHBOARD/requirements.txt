@@ -3,5 +3,7 @@ pandas
 geopandas
 folium
 streamlit-folium
-openpyxl
 plotly
+openpyxl
+SQLAlchemy>=2.0
+psycopg[binary]>=3.2
