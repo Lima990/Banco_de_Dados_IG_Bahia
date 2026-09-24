@@ -131,6 +131,10 @@ def normalizar_territorios(val):
 def normalizar_territorio(val):
     return normalizar_territorios(val)[0] if normalizar_territorios(val) else str(val)
 
+def normalizar_chave_produto(val):
+    """Usa a mesma chave para agrupar e filtrar ativos, sem alterar o nome exibido."""
+    return str(val).split('(')[0].strip()
+
 def limpar(val):
     if pd.isna(val): return None
     s = str(val).strip()
@@ -154,6 +158,22 @@ def normalizar_estudo_chave(row):
     if not any(partes):
         return None
     return tuple(partes)
+
+
+def contar_estudos_unicos(df_raw_local, nomes_produto=None):
+    """Conta estudos únicos por título+link+ABNT, opcionalmente filtrados por produto."""
+    if df_raw_local is None or df_raw_local.empty:
+        return 0
+
+    df = df_raw_local.copy()
+    if nomes_produto is not None and len(nomes_produto):
+        nomes = {normalizar_chave_produto(x) for x in nomes_produto}
+        coluna_filtro = ('chave_agrupamento' if 'chave_agrupamento' in df.columns
+                         else 'nome_produto')
+        df = df[df[coluna_filtro].map(normalizar_chave_produto).isin(nomes)].copy()
+
+    chaves = df['estudo_key'].dropna()
+    return int(chaves.nunique()) if not chaves.empty else 0
 
 
 def exibir_conteudo_ficha(row, show_criteria=True):
@@ -343,6 +363,7 @@ def carregar_dados():
                                 'titulo_trabalho': limpar(row.get('titulo_trabalho') or row.get('nome_produto'))})
             return pd.Series({
                 'nome_produto':          nome_final, # Usa o nome do grupo ou o nome construído
+                'chave_agrupamento':     grupo.name,
                 'territorio_identidade': base['territorio_identidade'],
                 'territorio_norm':       base['territorio_norm'],
                 'municipios_abrangidos': base['municipios_abrangidos'],
@@ -365,7 +386,7 @@ def carregar_dados():
 
         # Cria uma chave de agrupamento mais inteligente
         # Remove parênteses e espaços extras para agrupar variações do mesmo nome
-        df['chave_agrupamento'] = df['nome_produto'].str.split('(').str[0].str.strip()
+        df['chave_agrupamento'] = df['nome_produto'].map(normalizar_chave_produto)
 
         df_ag = (df.groupby('chave_agrupamento', sort=False)
                    .apply(agregar).reset_index(drop=True))
@@ -576,7 +597,7 @@ with st.sidebar:
                 df_filtrado['municipios_abrangidos'].astype(str).str.contains(busca,case=False,na=False)]
 
         st.divider()
-        t_est = int(df_filtrado['n_estudos'].sum()) if not df_filtrado.empty else 0
+        t_est = contar_estudos_unicos(df_raw, df_filtrado['chave_agrupamento'].dropna().unique()) if not df_filtrado.empty else 0
         st.caption(f"**{len(df_filtrado)}** ativos · **{t_est}** estudos")
 
         if st.button("🗑️ Limpar filtros"):
@@ -604,7 +625,7 @@ st.divider()
 # --- Calcula os totais usando a contagem real de estudos trabalhados ---
 # A soma por produto inflava o número porque os mesmos estudos aparecem em
 # múltiplas linhas do mesmo ativo e/ou em variações de preenchimento.
-total_estudos = int(df_raw['estudo_key'].dropna().nunique()) if not df_raw.empty else 0
+total_estudos = contar_estudos_unicos(df_raw) if not df_raw.empty else 0
 n_multi_estudos = len(df_base[df_base['n_estudos'] > 1]) if not df_base.empty else 0
 n_ti_coberto = len(territorios_cobertos)
 cobertura_pct = round(n_ti_coberto / 27 * 100)
