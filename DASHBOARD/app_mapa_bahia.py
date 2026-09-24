@@ -915,22 +915,7 @@ with aba3:
 
 
 
-with st.expander("🧪 Debug — Contagem de estudos"):
-    st.write("**Total de citações (soma dos n_estudos):**", total_estudos)
-    st.write("**Estudos únicos globais:**", total_estudos_unicos)
-    st.write("**Produtos:**", len(df_base))
-    st.write("**Produtos com >1 citação:**", n_multi_estudos)
 
-    # Lista as chaves únicas (referencias/links/fontes)
-    if not df_base.empty:
-        lista_chaves = []
-        for _, row in df_base.iterrows():
-            for est in (row.get('estudos') or []):
-                lista_chaves.append(
-                    est.get('referencia_abnt') or est.get('link') or est.get('fonte')
-                )
-        st.write("**Chaves únicas:**", len(set(lista_chaves)))
-        st.dataframe(pd.Series(list(set(lista_chaves)), name='chave').sort_values('chave'))
 # =================================================
 # ABA 4 – IGs REGISTRADAS (com territórios numerados)
 # =================================================
