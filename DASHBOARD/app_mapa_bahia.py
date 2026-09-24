@@ -16,10 +16,10 @@ st.set_page_config(
 )
 
 ARQUIVO_PLANILHA = "base_de_dados_IGs.xlsx"
-URL_PLANILHA = (
-    "https://raw.githubusercontent.com/Lima990/Banco_de_Dados_IG_Bahia/main/"
-    "base_de_dados_IGs.xlsx"
-)
+URLS_PLANILHA = [
+    "https://raw.githubusercontent.com/Lima990/Banco_de_Dados_IG_Bahia/main/DASHBOARD/base_de_dados_IGs.xlsx",
+    "https://raw.githubusercontent.com/Lima990/Banco_de_Dados_IG_Bahia/main/DASHBOARD/base_de_dados_IGs.csv",
+]
 
 # -------------------------------------------------
 # NUMERAÇÃO OFICIAL DOS 27 TIs (conforme SEI)
@@ -194,30 +194,19 @@ def exibir_conteudo_ficha(row, show_criteria=True):
 # -------------------------------------------------
 # CARREGAMENTO
 # -------------------------------------------------
-def obter_planilha_local_ou_remote():
-    """Procura a planilha no diretório local e, se não existir, tenta baixar do GitHub."""
-    caminhos = [
-        ARQUIVO_PLANILHA,
-        os.path.join("dados", ARQUIVO_PLANILHA),
-        os.path.join("data", ARQUIVO_PLANILHA),
-    ]
-
-    for caminho in caminhos:
-        if os.path.exists(caminho):
-            return caminho
-
-    for url in [URL_PLANILHA]:
+def obter_planilha_do_repositorio():
+    """Baixa a planilha diretamente do repositório GitHub oficial da base."""
+    for url in URLS_PLANILHA:
         try:
-            with urlopen(url, timeout=20) as resposta:
+            with urlopen(url, timeout=30) as resposta:
                 if resposta.status == 200:
                     os.makedirs("dados", exist_ok=True)
-                    destino = os.path.join("dados", ARQUIVO_PLANILHA)
+                    destino = os.path.join("dados", os.path.basename(url))
                     with open(destino, "wb") as arq:
                         arq.write(resposta.read())
                     return destino
         except (HTTPError, URLError, TimeoutError, OSError):
             continue
-
     return None
 
 
@@ -253,17 +242,13 @@ def auditar_estudos(df_raw, df_ativos=None):
 
 
 @st.cache_data
-def carregar_dados(uploaded_file=None):
-    planilha = None
-    if uploaded_file is not None:
-        planilha = uploaded_file
-    else:
-        planilha = obter_planilha_local_ou_remote()
+def carregar_dados():
+    planilha = obter_planilha_do_repositorio()
     try:
         if planilha is None:
             st.warning(
-                "⚠️ Não foi possível baixar a planilha do GitHub. Usando arquivo local. "
-                "Verifique se o arquivo 'base_de_dados_IGs.xlsx' existe na pasta do projeto."
+                "⚠️ Não foi possível carregar a planilha diretamente do repositório GitHub. "
+                "Verifique se a base continua pública no repo oficial."
             )
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
@@ -406,21 +391,11 @@ def carregar_territorios():
         st.error(f"❌ Territórios: {e}")
         return gpd.GeoDataFrame()
 
-uploaded_file = st.sidebar.file_uploader(
-    "📁 Selecione a planilha local (.xlsx/.xls)",
-    type=["xlsx", "xls"],
-    help="Use esta opção quando a planilha não estiver na pasta do projeto ou o download do GitHub falhar.",
-)
-
-if uploaded_file is not None:
-    df_raw, df_base, df_oficial = carregar_dados(uploaded_file=uploaded_file)
-else:
-    df_raw, df_base, df_oficial = carregar_dados()
+df_raw, df_base, df_oficial = carregar_dados()
 
 if df_raw.empty and df_base.empty and df_oficial.empty:
     st.warning(
-        "Nenhuma planilha foi carregada. Coloque o arquivo 'base_de_dados_IGs.xlsx' na pasta do projeto "
-        "ou use o carregador acima para selecionar o arquivo localmente."
+        "Nenhuma planilha foi carregada. A base não pôde ser acessada no repositório GitHub oficial."
     )
     st.stop()
 
