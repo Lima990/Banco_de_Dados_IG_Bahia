@@ -136,6 +136,26 @@ def limpar(val):
     s = str(val).strip()
     return None if s.lower() in ('nan','','none') else s
 
+
+def normalizar_estudo_chave(row):
+    """Cria a chave de correlação real do estudo: título + link + referência ABNT.
+    Essa regra evita contagens duplicadas quando o mesmo estudo aparece em linhas
+    com variações de preenchimento ou de origem.
+    """
+    titulo = limpar(row.get('titulo_trabalho') or row.get('nome_produto'))
+    link = limpar(row.get('link'))
+    abnt = limpar(row.get('referencia_abnt'))
+
+    partes = [
+        (titulo or '').strip().lower(),
+        (link or '').strip().lower(),
+        (abnt or '').strip().lower(),
+    ]
+    if not any(partes):
+        return None
+    return tuple(partes)
+
+
 def exibir_conteudo_ficha(row, show_criteria=True):
     """Exibe o conteúdo detalhado de uma ficha de ativo, com opção de mostrar critérios."""
     modal = row.get('macro_modalidade', '')
@@ -304,15 +324,22 @@ def carregar_dados():
             base = principal.sort_values('_p', ascending=False).iloc[0]
             estudos, vistos = [], set()
             for _, row in grupo.iterrows():
+                chave = normalizar_estudo_chave(row)
+                if chave is None:
+                    continue
+
+                if chave in vistos:
+                    continue
+
+                vistos.add(chave)
+
                 ref   = limpar(row.get('referencia_abnt'))
                 link  = limpar(row.get('link'))
                 fonte = limpar(row.get('fonte_dados'))
                 ano   = row.get('ano')
-                chave = ref or link or fonte
-                if chave and chave not in vistos:
-                    vistos.add(chave)
-                    estudos.append({'ano': int(ano) if pd.notna(ano) else None,
-                                    'fonte': fonte, 'link': link, 'referencia_abnt': ref})
+                estudos.append({'ano': int(ano) if pd.notna(ano) else None,
+                                'fonte': fonte, 'link': link, 'referencia_abnt': ref,
+                                'titulo_trabalho': limpar(row.get('titulo_trabalho') or row.get('nome_produto'))})
             return pd.Series({
                 'nome_produto':          nome_final, # Usa o nome do grupo ou o nome construído
                 'territorio_identidade': base['territorio_identidade'],
