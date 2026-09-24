@@ -662,7 +662,7 @@ k1, k2, k3, k4 = st.columns(4)
 kpis_row1 = [
     (k1, "Potenciais Identificados", n_potenciais, "mapeados neste TCC"),
     (k2, "Potenciais com Notoriedade", n_notoriedade, f"{pct_notoriedade}% dos potenciais"),
-    (k3, "Estudos Referenciados", total_estudos, f"{n_multi_estudos} com múltiplos estudos"),
+    (k3, "Estudos Únicos Trabalhados", total_estudos, f"{n_multi_estudos} ativos com múltiplos estudos"),
     (k4, "Cobertura Territorial", f"{n_ti_coberto}/27", f"{cobertura_pct}% dos territórios"),
 ]
 for col, titulo, valor, sub in kpis_row1:
@@ -694,10 +694,10 @@ with k8:
     linhas_top3 = ""
     for i, (nome, qtd) in enumerate(top3_estudos, start=1):
         nome_curto = nome if len(nome) <= 20 else nome[:18] + "…"
-        linhas_top3 += (f"<div style='display:flex;justify-content:space-between;"
+        linhas_top3 += (f"<div style='display:flex;justify-content:space-between;gap:10px;"
                          f"align-items:center;font-size:10px;margin-top:2px;line-height:1.2;' title='{nome}'>"
-                         f"<span style='color:#ccc'>{i}º · {nome_curto}</span>"
-                         f"<span style='color:#F2B705;font-weight:600;flex-shrink:0;margin-left:6px;'>{int(qtd)}</span></div>")
+                 f"<span style='color:#ccc;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>{i}º · {nome_curto}</span>"
+                 f"<span style='color:#F2B705;font-weight:600;flex-shrink:0;white-space:nowrap;'>{int(qtd)} estudos</span></div>")
     if not linhas_top3:
         linhas_top3 = "<div style='font-size:10px;color:#6E7681;margin-top:2px;'>Sem dados</div>"
     st.markdown(f"""<div class="kpi-card" style="text-align:left;">
