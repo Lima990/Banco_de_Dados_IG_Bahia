@@ -959,11 +959,7 @@ with aba4:
         template='plotly_dark', height=280,
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         margin=dict(l=0,r=0,t=20,b=40), yaxis_title='Quantidade', showlegend=False,
-        annotations=[dict(
-            text="Este TCC identificou um potencial ~13x maior que as IGs já concedidas na Bahia",
-            xref="paper", yref="paper", x=0.5, y=-0.22,
-            showarrow=False, font=dict(size=11, color='#8B949E'))]
-    )
+        annotations
     st.plotly_chart(fig_ctx, use_container_width=True)
 
 # =================================================
