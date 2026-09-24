@@ -75,8 +75,7 @@ COLUNAS_ESPERADAS = [
     'vinculo_territorial','viabilidade_economica','atores_chave','geometria_espacial'
 ]
 
-NOMES_COLUNA_TITULO = ('titulo', 'titulos', 'título', 'títulos')
-
+NOMES_COLUNA_TITULO = ('titulo_trabalho', 'titulo', 'titulos', 'título', 'títulos')
 # -------------------------------------------------
 # FUNÇÕES AUXILIARES
 # -------------------------------------------------
