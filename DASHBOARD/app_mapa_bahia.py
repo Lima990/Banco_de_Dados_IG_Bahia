@@ -399,22 +399,7 @@ if df_raw.empty and df_base.empty and df_oficial.empty:
     )
     st.stop()
 
-if not df_raw.empty:
-    auditoria = auditar_estudos(df_raw, df_base)
-    linhas_planilha = len(df_raw)
-    linhas_sem_titulo = int(df_raw['nome_produto'].astype(str).str.strip().eq('').sum())
-    titulos_distintos_global = int(df_raw['nome_produto'].astype(str).str.strip().nunique())
-    soma_n_estudos_por_ativo = int(df_base['n_estudos'].sum()) if not df_base.empty else 0
-
-    st.markdown("### 🧪 Auditoria de estudos (temporário)")
-    st.write(f"Linhas na planilha: **{linhas_planilha}**")
-    st.write(f"Linhas sem título: **{linhas_sem_titulo}**")
-    st.write(f"Títulos distintos (global): **{titulos_distintos_global}**")
-    st.write(f"Soma de n_estudos por ativo: **{soma_n_estudos_por_ativo}**")
-    st.write("**Por ativo** (`diverge = True` indica contagem atual diferente da contagem por título)")
-    st.dataframe(auditoria, use_container_width=True, hide_index=True)
-
-territorios_ba   = carregar_territorios()
+territorios_ba = carregar_territorios()
 
 # Calcula IGs oficiais (Concedidas) a partir da aba dedicada
 # 'BD_IGs_concedida_analise', que é a fonte de verdade para esse status
