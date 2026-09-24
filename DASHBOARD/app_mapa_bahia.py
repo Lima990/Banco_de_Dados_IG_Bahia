@@ -945,7 +945,7 @@ with aba4:
                 <span style='color:#8B949E;font-size:12px'>📍 {territorio_fmt}</span>
             </div>""", unsafe_allow_html=True)
 
-    st.divider()
+       st.divider()
     total_pot = n_potenciais
     st.markdown("**Contexto: registradas × potenciais mapeados por este TCC**")
     fig_ctx = go.Figure(go.Bar(
@@ -955,11 +955,29 @@ with aba4:
         text=[len(concedidas), total_pot],
         textposition='outside', width=[0.4,0.4]
     ))
+
+    # Cálculo dinâmico da razão (evita texto hardcoded)
+    if len(concedidas) > 0:
+        razao = total_pot / len(concedidas)
+        razao_str = f"{razao:.1f}".rstrip('0').rstrip('.') if razao % 1 else f"{razao:.0f}"
+        texto_razao = (f"Este TCC identificou um potencial ~{razao_str}x "
+                       f"maior que as IGs já concedidas na Bahia")
+    else:
+        texto_razao = ("Este TCC identificou um número expressivo de potenciais "
+                       "ativos ainda não certificados na Bahia")
+
     fig_ctx.update_layout(
         template='plotly_dark', height=280,
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=0,r=0,t=20,b=40), yaxis_title='Quantidade', showlegend=False,
-        annotations
+        margin=dict(l=0, r=0, t=20, b=40),
+        yaxis_title='Quantidade', showlegend=False,
+        annotations=[dict(
+            text=texto_razao,
+            xref="paper", yref="paper", x=0.5, y=-0.22,
+            showarrow=False, font=dict(size=11, color='#8B949E')
+        )]
+    )
+
     st.plotly_chart(fig_ctx, use_container_width=True)
 
 # =================================================
