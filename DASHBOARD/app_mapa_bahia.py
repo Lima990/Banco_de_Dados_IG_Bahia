@@ -253,8 +253,12 @@ def auditar_estudos(df_raw, df_ativos=None):
 
 
 @st.cache_data
-def carregar_dados():
-    planilha = obter_planilha_local_ou_remote()
+def carregar_dados(uploaded_file=None):
+    planilha = None
+    if uploaded_file is not None:
+        planilha = uploaded_file
+    else:
+        planilha = obter_planilha_local_ou_remote()
     try:
         if planilha is None:
             st.warning(
@@ -402,7 +406,23 @@ def carregar_territorios():
         st.error(f"❌ Territórios: {e}")
         return gpd.GeoDataFrame()
 
-df_raw, df_base, df_oficial = carregar_dados()
+uploaded_file = st.sidebar.file_uploader(
+    "📁 Selecione a planilha local (.xlsx/.xls)",
+    type=["xlsx", "xls"],
+    help="Use esta opção quando a planilha não estiver na pasta do projeto ou o download do GitHub falhar.",
+)
+
+if uploaded_file is not None:
+    df_raw, df_base, df_oficial = carregar_dados(uploaded_file=uploaded_file)
+else:
+    df_raw, df_base, df_oficial = carregar_dados()
+
+if df_raw.empty and df_base.empty and df_oficial.empty:
+    st.warning(
+        "Nenhuma planilha foi carregada. Coloque o arquivo 'base_de_dados_IGs.xlsx' na pasta do projeto "
+        "ou use o carregador acima para selecionar o arquivo localmente."
+    )
+    st.stop()
 
 if not df_raw.empty:
     auditoria = auditar_estudos(df_raw, df_base)
