@@ -10,6 +10,8 @@ import re
 import html as _html
 import unicodedata
 from collections import Counter
+import requests
+from io import BytesIO
 
 st.set_page_config(
     page_title="IGs Bahia: Diagnóstico Territorial",
@@ -19,6 +21,16 @@ st.set_page_config(
 
 # Ligue/desligue o painel de auditoria dos estudos
 MOSTRAR_AUDITORIA = True
+
+# -------------------------------------------------
+# CONFIGURAÇÃO DO GITHUB
+# -------------------------------------------------
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/Lima990/Banco_de_Dados_IG_Bahia/main/"
+GITHUB_XLSX_URL = GITHUB_RAW_BASE + "base_de_dados_IGs.xlsx"
+GITHUB_GEOJSON_URL = (
+    "https://raw.githubusercontent.com/CleitonOERocha/Shapefiles/master/"
+    "Shapefiles/Territorios%20de%20Identidade_BA/Terri_iden_ba_v2.json"
+)
 
 # -------------------------------------------------
 # ESTILO DA SIDEBAR
@@ -76,6 +88,7 @@ COLUNAS_ESPERADAS = [
 ]
 
 NOMES_COLUNA_TITULO = ('titulo_trabalho', 'titulo', 'titulos', 'título', 'títulos')
+
 # -------------------------------------------------
 # FUNÇÕES AUXILIARES
 # -------------------------------------------------
@@ -146,8 +159,6 @@ def extrair_coords(val):
         pass
     return None, None
 
-# Correção de nomes fora do padrão oficial.
-# ATENÇÃO: confirme se "Baixo São Francisco" equivale mesmo ao TI Sertão do São Francisco.
 CORRECAO_TERRITORIOS = {
     'Baixo Sao Francisco': 'Sertão do São Francisco',
     'Baixo São Francisco': 'Sertão do São Francisco',
@@ -253,15 +264,36 @@ def exibir_conteudo_ficha(row, show_criteria=True):
 # -------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+@st.cache_data(ttl=300)
+def baixar_arquivo_do_github(url: str) -> bytes:
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    return response.content
+
+@st.cache_data(ttl=300)
+def carregar_excel_atualizado():
+    try:
+        conteudo = baixar_arquivo_do_github(GITHUB_XLSX_URL)
+        return pd.read_excel(BytesIO(conteudo), sheet_name=0)
+    except Exception as e:
+        st.warning(f"⚠️ Não foi possível baixar a planilha do GitHub. Usando arquivo local. Erro: {e}")
+        arquivo_excel = os.path.join(BASE_DIR, "base_de_dados_IGs.xlsx")
+        return pd.read_excel(arquivo_excel, sheet_name=0)
+
+@st.cache_data(ttl=300)
+def carregar_aba_excel_atualizada(sheet_name):
+    try:
+        conteudo = baixar_arquivo_do_github(GITHUB_XLSX_URL)
+        return pd.read_excel(BytesIO(conteudo), sheet_name=sheet_name)
+    except Exception:
+        arquivo_excel = os.path.join(BASE_DIR, "base_de_dados_IGs.xlsx")
+        return pd.read_excel(arquivo_excel, sheet_name=sheet_name)
+
 @st.cache_data
 def carregar_dados():
     try:
-        arquivo_excel = os.path.join(BASE_DIR, "base_de_dados_IGs.xlsx")
+        df = carregar_excel_atualizado()
 
-        # Lê a primeira aba da planilha, independente do nome
-        df = pd.read_excel(arquivo_excel, sheet_name=0)
-
-        # Verifica colunas ausentes ANTES de preenchê-las
         ausentes = [c for c in COLUNAS_ESPERADAS if c not in df.columns]
         if ausentes:
             st.warning(f"⚠️ Colunas ausentes na planilha (preenchidas como vazias): {ausentes}")
@@ -274,7 +306,6 @@ def carregar_dados():
         col_titulo = detectar_coluna_titulo(df.columns)
         df['titulo_norm'] = df[col_titulo].apply(norm_titulo) if col_titulo else None
 
-        # Extração de coordenadas com fallback
         df[['latitude', 'longitude']] = df['geometria_espacial'].apply(
             lambda x: pd.Series(extrair_coords(x))
         )
@@ -285,7 +316,6 @@ def carregar_dados():
         if 'ano' in df.columns:
             df['ano'] = pd.to_numeric(df['ano'], errors='coerce')
 
-        # Chave de exibição (espaços colapsados) e chave de agrupamento (sem caixa/acento)
         df['chave_display'] = (df['nome_produto'].astype(str).str.split('(').str[0]
                                .str.replace(r'\s+', ' ', regex=True).str.strip())
         df['chave_agrupamento'] = df['chave_display'].apply(norm_titulo)
@@ -315,7 +345,6 @@ def carregar_dados():
             principal['_p'] = principal.apply(priority_score, axis=1)
             base = principal.sort_values('_p', ascending=False).iloc[0]
 
-            # Estudos deduplicados: título normalizado > referência ABNT > link > fonte
             estudos, vistos = [], set()
             for _, row in grupo.iterrows():
                 titulo = limpar(row.get(col_titulo)) if col_titulo else None
@@ -358,12 +387,9 @@ def carregar_dados():
               .reset_index(drop=True)
         )
 
-        # -------------------------------------------------
-        # Aba com as IGs oficiais concedidas no INPI
-        # -------------------------------------------------
         df_of = pd.DataFrame()
         try:
-            df_of = pd.read_excel(arquivo_excel, sheet_name="BD_IGs_concedida_analise")
+            df_of = carregar_aba_excel_atualizada("BD_IGs_concedida_analise")
             df_of = df_of.dropna(subset=['nome_produto']).copy()
 
             if 'geometria_espacial' in df_of.columns:
@@ -398,27 +424,29 @@ def carregar_dados():
         st.error(f"❌ Erro inesperado ao carregar os dados: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def carregar_territorios():
-    url = ("https://raw.githubusercontent.com/CleitonOERocha/Shapefiles/master/"
-           "Shapefiles/Territorios%20de%20Identidade_BA/Terri_iden_ba_v2.json")
     cache_file = os.path.join(BASE_DIR, "territorios_ba.json")
     try:
-        if os.path.exists(cache_file):
-            gdf = gpd.read_file(cache_file)
-        else:
-            gdf = gpd.read_file(url)
+        conteudo = baixar_arquivo_do_github(GITHUB_GEOJSON_URL)
+        gdf = gpd.read_file(BytesIO(conteudo))
+        try:
             gdf.to_file(cache_file, driver="GeoJSON")
+        except Exception:
+            pass
         return gdf
-    except Exception as e:
-        st.error(f"❌ Territórios: {e}")
+    except Exception:
+        try:
+            if os.path.exists(cache_file):
+                return gpd.read_file(cache_file)
+        except Exception as e:
+            st.error(f"❌ Territórios: {e}")
         return gpd.GeoDataFrame()
 
 df_raw, df_base, df_oficial = carregar_dados()
 territorios_ba = carregar_territorios()
 COL_TITULO = detectar_coluna_titulo(df_raw.columns) if not df_raw.empty else None
 
-# IGs oficiais (Concedidas) a partir da aba dedicada
 igs_oficiais = df_oficial if not df_oficial.empty else pd.DataFrame()
 
 n_concedidas = 0
@@ -509,14 +537,13 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
 """, unsafe_allow_html=True)
 
 # -------------------------------------------------
-# SIDEBAR (territórios individuais e numerados)
+# SIDEBAR
 # -------------------------------------------------
 with st.sidebar:
     st.markdown("## 🔎 Filtros")
     df_filtrado = pd.DataFrame()
 
     if not df_base.empty:
-        # Lista construída a partir dos territórios individuais (explode multi-territórios)
         tis_individuais = set()
         for v in df_base['territorio_identidade'].dropna():
             for t in normalizar_territorios(v):
@@ -583,7 +610,6 @@ st.divider()
 # -------------------------------------------------
 soma_estudos_por_ativo = int(df_base['n_estudos'].sum()) if not df_base.empty else 0
 
-# KPI global: trabalhos DISTINTOS (por título normalizado). Sem coluna de título, cai na soma.
 if COL_TITULO is not None and not df_raw.empty and df_raw['titulo_norm'].notna().any():
     total_estudos = int(df_raw['titulo_norm'].nunique())
 else:
@@ -660,7 +686,7 @@ with k8:
     </div>""", unsafe_allow_html=True)
 
 # -------------------------------------------------
-# AUDITORIA DOS ESTUDOS (temporária)
+# AUDITORIA DOS ESTUDOS
 # -------------------------------------------------
 if MOSTRAR_AUDITORIA and not df_raw.empty:
     with st.expander("🧪 Auditoria de estudos (temporário)"):
@@ -718,7 +744,6 @@ aba1, aba2, aba3, aba4, aba5 = st.tabs([
     "ℹ️ Sobre o Projeto"
 ])
 
-# Cores dos marcadores (nomes do Folium) e seus equivalentes em hex para a legenda
 COR_MARCADOR = {'Agroalimentar':'green','Artesanato':'purple','Bebidas':'blue',
                 'Agrícola':'cadetblue','Serviços':'pink','Outros':'gray',
                 'IG Registrada':'darkgreen'}
@@ -881,7 +906,6 @@ with aba2:
 
         st.divider()
 
-        # Estudos por ano: usa o ano de CADA estudo (não o ano do registro principal do ativo)
         anos_estudos = [e['ano'] for est in df_filtrado['estudos'] if isinstance(est, list)
                         for e in est if e.get('ano')]
         if anos_estudos:
@@ -999,7 +1023,7 @@ with aba3:
                 file_name="igs_bahia_filtrado.csv", mime="text/csv")
 
 # =================================================
-# ABA 4: IGs REGISTRADAS (territórios numerados)
+# ABA 4: IGs REGISTRADAS
 # =================================================
 with aba4:
     st.markdown('<div class="sec-title">🏅 IGs Registradas na Bahia (INPI)</div>',
@@ -1024,104 +1048,4 @@ with aba4:
             ano_str = f"Concedida em {int(ig['ano'])}" if pd.notna(ig.get('ano')) else 'Concedida'
             st.markdown(f"""<div class="ig-card-ok">
                 <b style='color:#E6EDF3;font-size:13px'>{esc(ig['nome_produto'])}</b><br>
-                {tag_m} &nbsp;<span style='color:#6E7681;font-size:12px'>{ano_str}</span><br>
-                <span style='color:#8B949E;font-size:12px'>📍 {esc(territorio_fmt)}</span>
-            </div>""", unsafe_allow_html=True)
-
-    st.divider()
-    total_pot = n_potenciais
-    st.markdown("**Contexto: registradas × potenciais mapeados por este TCC**")
-
-    fig_ctx = go.Figure(go.Bar(
-        x=['IGs Concedidas', 'Potenciais Mapeados (TCC)'],
-        y=[len(concedidas), total_pot],
-        marker_color=['#56d364', '#F2B705'],
-        text=[len(concedidas), total_pot],
-        textposition='outside', width=[0.4, 0.4]
-    ))
-
-    if len(concedidas) > 0:
-        razao = total_pot / len(concedidas)
-        razao_str = f"{razao:.1f}".rstrip('0').rstrip('.') if razao % 1 else f"{razao:.0f}"
-        texto_razao = (f"Este TCC identificou um potencial ~{razao_str}x "
-                       f"maior que as IGs já concedidas na Bahia")
-    else:
-        texto_razao = ("Este TCC identificou um número expressivo de potenciais "
-                       "ativos ainda não certificados na Bahia")
-
-    fig_ctx.update_layout(
-        template='plotly_dark', height=280,
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=0, r=0, t=20, b=40),
-        yaxis_title='Quantidade', showlegend=False,
-        annotations=[dict(
-            text=texto_razao,
-            xref="paper", yref="paper", x=0.5, y=-0.22,
-            showarrow=False, font=dict(size=11, color='#8B949E')
-        )]
-    )
-    st.plotly_chart(fig_ctx, use_container_width=True)
-
-# =================================================
-# ABA 5: SOBRE
-# =================================================
-with aba5:
-    st.markdown('<div class="sec-title">ℹ️ Sobre o Projeto</div>', unsafe_allow_html=True)
-    st.divider()
-
-    cs1, cs2 = st.columns([3,2])
-    with cs1:
-        st.markdown("""<div class="about-box">
-        <b style='color:#F2B705;font-size:15px'>Mapeamento de Potenciais Indicações Geográficas
-        por Território de Identidade no Estado da Bahia</b><br><br>
-        Trabalho de Conclusão de Curso do <b>PROFNIT (Programa de Pós-Graduação em
-        Propriedade Intelectual e Transferência de Tecnologia para Inovação)</b>,
-        pelo ponto focal da <b>UFRB (Universidade Federal do Recôncavo da Bahia)</b>.<br><br>
-        <b>Objetivo:</b> Identificar, catalogar e analisar produtos e serviços com
-        características territoriais distintivas, passíveis de proteção como IGs nos 27
-        Territórios de Identidade baianos, por meio de banco de dados georreferenciado
-        e plataforma digital interativa.<br><br>
-        <b>Metodologia:</b> Revisão sistemática e pesquisa documental, com critérios de
-        seleção baseados nos 4 pilares exigidos pelo INPI: singularidade, tradição
-        histórica, vínculo territorial e viabilidade econômica.<br><br>
-        <b>Produto tecnológico:</b> Dashboard desenvolvido em Python (Streamlit), ferramenta
-        inédita de inteligência territorial para a gestão da PI no estado da Bahia.
-        </div>""", unsafe_allow_html=True)
-    with cs2:
-        st.markdown("""<div class="about-box">
-        <b style='color:#F2B705'>Informações Acadêmicas</b><br><br>
-        👤 <b>Discente:</b> Vinícius de Jesus Almeida Lima<br>
-        🎓 <b>Orientador:</b> Dr. Luís Oscar Silva Martins<br>
-        🏛️ <b>Instituição:</b> UFRB / PROFNIT<br>
-        📅 <b>Período:</b> 2025 a 2026<br>
-        🔗 <b>Projeto Integrador:</b> IGs e Marcas Coletivas e Inovação Associada
-        ao Desenvolvimento Sustentável<br><br>
-        <b style='color:#F2B705'>Critérios de Seleção (INPI)</b><br><br>
-        ⭐ Singularidade do produto<br>
-        📜 Tradição histórica e cultural<br>
-        📍 Vínculo territorial<br>
-        💼 Viabilidade econômica<br><br>
-        <b style='color:#F2B705'>Tecnologias</b><br><br>
-        🐍 Python · Streamlit · Folium<br>
-        📊 Plotly · GeoPandas · Pandas<br>
-        ☁️ Streamlit Community Cloud
-        </div>""", unsafe_allow_html=True)
-
-    st.divider()
-    st.markdown("""<div style='background:#161B22;border-radius:10px;padding:14px 18px;
-        border-left:4px solid #F2B705;font-size:12px;color:#ccc;'>
-        <b style='color:#F2B705'>📋 Como citar este produto tecnológico</b><br><br>
-        LIMA, Vinícius de Jesus Almeida.
-        <i><b>Prospecção de indicações geográficas na Bahia:</b> mapeamento por Territórios de Identidade.</i>
-        Dashboard, produto tecnológico do Trabalho de Conclusão de Curso. PROFNIT/UFRB. Feira de Santana, 2026.
-    </div>""", unsafe_allow_html=True)
-
-# -------------------------------------------------
-# RODAPÉ
-# -------------------------------------------------
-st.divider()
-st.markdown(
-    "<div style='text-align:center;color:#6E7681;font-size:11px;'>"
-    "Projeto acadêmico <b>PROFNIT</b>: Diagnóstico Territorial de IGs | Bahia &nbsp;·&nbsp; "
-    "Desenvolvido por: <b>Vinícius de Jesus Almeida Lima</b> · 2026"
-    "</div>", unsafe_allow_html=True)
+                {tag_m} &nbsp;<span style='color:#6E7681;font-size
