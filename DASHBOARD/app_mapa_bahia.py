@@ -288,6 +288,7 @@ def carregar_dados():
         df['territorio_norm']  = df['territorio_identidade'].apply(normalizar_territorio)
         if 'ano' in df.columns:
             df['ano'] = pd.to_numeric(df['ano'], errors='coerce')
+        df['estudo_key'] = df.apply(normalizar_estudo_chave, axis=1)
 
         def agregar(grupo):
             # --- Lógica para criar um nome final descritivo ---
@@ -600,8 +601,10 @@ st.divider()
 # -------------------------------------------------
 # KPIs
 # -------------------------------------------------
-# --- Calcula os totais a partir da base de dados completa (df_base) ---
-total_estudos = int(df_base['n_estudos'].sum()) if not df_base.empty else 0
+# --- Calcula os totais usando a contagem real de estudos trabalhados ---
+# A soma por produto inflava o número porque os mesmos estudos aparecem em
+# múltiplas linhas do mesmo ativo e/ou em variações de preenchimento.
+total_estudos = int(df_raw['estudo_key'].dropna().nunique()) if not df_raw.empty else 0
 n_multi_estudos = len(df_base[df_base['n_estudos'] > 1]) if not df_base.empty else 0
 n_ti_coberto = len(territorios_cobertos)
 cobertura_pct = round(n_ti_coberto / 27 * 100)
