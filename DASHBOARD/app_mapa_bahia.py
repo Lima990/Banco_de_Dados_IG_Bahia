@@ -705,7 +705,12 @@ with aba1:
                 unsafe_allow_html=True)
     st.caption("🟡 Territórios com ativos filtrados (intensidade = quantidade)")
 
-    mapa = folium.Map(location=[-12.5,-41.5], zoom_start=6, tiles="cartodbpositron")
+    mapa = folium.Map(
+        location=[-12.5, -41.5],
+        zoom_start=6,
+        tiles="OpenStreetMap",
+        attr="© OpenStreetMap contributors"
+    )
 
     # Conjunto de territórios cobertos (nomes originais) para destacar
     ti_com = set()
