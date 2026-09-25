@@ -517,8 +517,9 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
     padding:12px 16px;margin-bottom:8px;border-left:4px solid #56d364;}
 .about-box{background:#161B22;border:1px solid #30363d;border-radius:12px;
     padding:20px 24px;font-size:13px;color:#ccc;line-height:1.7;}
-.dashboard-title{display:block;font-family:Sora,sans-serif;font-size:22px;
-    font-weight:700;color:#1f2937;line-height:1.25;}
+.dashboard-title{display:block !important;font-family:Sora,sans-serif;font-size:22px;
+    font-weight:700 !important;color:#111827 !important;line-height:1.25;
+    opacity:1 !important;visibility:visible !important;}
 .dashboard-subtitle{display:block;color:#4b5563;font-size:12px;
     line-height:1.5;white-space:normal;overflow-wrap:anywhere;}
 @media (prefers-color-scheme: dark){
@@ -591,7 +592,7 @@ with st.sidebar:
 st.markdown("""
 <div style='margin-bottom:4px;'>
     <span class='dashboard-title'>
-    🛡️ Mapeia IG Bahia
+    Mapeia IG Bahia
   </span><br>
     <span class='dashboard-subtitle'>
     Plataforma de Inteligência Territorial para Indicações Geográficas &nbsp;·&nbsp; PROFNIT / UFRB 2026
