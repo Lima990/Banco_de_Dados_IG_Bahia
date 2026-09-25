@@ -522,7 +522,6 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
 .dashboard-subtitle{display:block;color:#4b5563;font-size:12px;
     line-height:1.5;white-space:normal;overflow-wrap:anywhere;}
 @media (prefers-color-scheme: dark){
-    .dashboard-title{color:#E6EDF3;}
     .dashboard-subtitle{color:#8B949E;}
 }
 </style>
