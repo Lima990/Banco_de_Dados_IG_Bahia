@@ -518,7 +518,7 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
 .about-box{background:#161B22;border:1px solid #30363d;border-radius:12px;
     padding:20px 24px;font-size:13px;color:#ccc;line-height:1.7;}
 .dashboard-title{display:block !important;font-family:Sora,sans-serif;font-size:22px;
-    font-weight:700 !important;color:var(--text-color,#111827) !important;line-height:1.25;
+    font-weight:700 !important;color:#F2B705 !important;line-height:1.25;
     opacity:1 !important;visibility:visible !important;}
 .dashboard-subtitle{display:block;color:#4b5563;font-size:12px;
     line-height:1.5;white-space:normal;overflow-wrap:anywhere;}
