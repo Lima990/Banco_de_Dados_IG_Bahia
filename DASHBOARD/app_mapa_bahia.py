@@ -595,7 +595,7 @@ st.markdown("""
     Mapeia IG Bahia
   </span><br>
     <span class='dashboard-subtitle'>
-    Plataforma de Inteligência Territorial para Indicações Geográficas &nbsp;·&nbsp; PROFNIT / UFRB 2026
+    Mapeia IG Bahia - Plataforma de Inteligência Territorial para Indicações Geográficas &nbsp;·&nbsp; PROFNIT / UFRB 2026
   </span>
 </div>
 """, unsafe_allow_html=True)
