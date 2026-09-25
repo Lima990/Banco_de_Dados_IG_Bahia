@@ -584,10 +584,10 @@ with st.sidebar:
 st.markdown("""
 <div style='margin-bottom:4px;'>
   <span style='font-family:Sora,sans-serif;font-size:22px;font-weight:700;color:#E6EDF3;'>
-    🛡️ Diagnóstico de Indicações Geográficas – Bahia
+    🛡️ Mapeia IG Bahia
   </span><br>
   <span style='color:#8B949E;font-size:12px;'>
-    Mapeamento de potenciais IGs nos 27 Territórios de Identidade &nbsp;·&nbsp; PROFNIT / UFRB 2026
+    Plataforma de Inteligência Territorial para Indicações Geográficas &nbsp;·&nbsp; PROFNIT / UFRB 2026
   </span>
 </div>
 """, unsafe_allow_html=True)
