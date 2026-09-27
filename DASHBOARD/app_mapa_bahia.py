@@ -6,7 +6,8 @@ from streamlit_folium import st_folium
 import plotly.express as px
 import plotly.graph_objects as go
 import os
-from sqlalchemy import create_engine
+import hashlib
+import unicodedata
 
 st.set_page_config(
     page_title="IGs Bahia – Diagnóstico Territorial",
@@ -124,50 +125,41 @@ def normalizar_territorios(val):
 def normalizar_territorio(val):
     return normalizar_territorios(val)[0] if normalizar_territorios(val) else str(val)
 
-def normalizar_chave_produto(val):
-    """Usa a mesma chave para agrupar e filtrar ativos, sem alterar o nome exibido."""
-    return str(val).split('(')[0].strip()
-
 def limpar(val):
     if pd.isna(val): return None
     s = str(val).strip()
     return None if s.lower() in ('nan','','none') else s
 
+def normalizar_texto_bibliografico(val):
+    texto = limpar(val)
+    if not texto:
+        return ''
+    texto = unicodedata.normalize('NFKD', texto.lower())
+    texto = ''.join(char for char in texto if not unicodedata.combining(char))
+    return re.sub(r'[^a-z0-9]+', ' ', texto).strip()
 
-def normalizar_estudo_chave(row):
-    """Cria a chave de correlação real do estudo: título + link + referência ABNT.
-    Essa regra evita contagens duplicadas quando o mesmo estudo aparece em linhas
-    com variações de preenchimento ou de origem.
-    """
-    titulo = limpar(row.get('titulo_trabalho') or row.get('nome_produto'))
-    link = limpar(row.get('link'))
-    abnt = limpar(row.get('referencia_abnt'))
+def gerar_estudo_id(row):
+    titulo = normalizar_texto_bibliografico(row.get('titulo_trabalho'))
+    ano = pd.to_numeric(row.get('ano'), errors='coerce')
+    referencia = normalizar_texto_bibliografico(row.get('referencia_abnt'))
+    link = normalizar_texto_bibliografico(row.get('link'))
 
-    partes = [
-        (titulo or '').strip().lower(),
-        (link or '').strip().lower(),
-        (abnt or '').strip().lower(),
-    ]
-    if not any(partes):
+    if titulo:
+        ano_chave = str(int(ano)) if pd.notna(ano) else ''
+        chave = f'titulo:{titulo}|ano:{ano_chave}'
+    elif referencia:
+        chave = f'referencia:{referencia}'
+    elif link:
+        chave = f'link:{link}'
+    else:
         return None
-    return tuple(partes)
 
+    digest = hashlib.sha1(chave.encode('utf-8')).hexdigest()[:12]
+    return f'EST-{digest}'
 
-def contar_estudos_unicos(df_raw_local, nomes_produto=None):
-    """Conta estudos únicos por título+link+ABNT, opcionalmente filtrados por produto."""
-    if df_raw_local is None or df_raw_local.empty:
-        return 0
-
-    df = df_raw_local.copy()
-    if nomes_produto is not None and len(nomes_produto):
-        nomes = {normalizar_chave_produto(x) for x in nomes_produto}
-        coluna_filtro = ('chave_agrupamento' if 'chave_agrupamento' in df.columns
-                         else 'nome_produto')
-        df = df[df[coluna_filtro].map(normalizar_chave_produto).isin(nomes)].copy()
-
-    chaves = df['estudo_key'].dropna()
-    return int(chaves.nunique()) if not chaves.empty else 0
-
+def formatar_ids_origem(ids):
+    return ', '.join(str(int(valor)) if pd.notna(valor) and float(valor).is_integer()
+                     else str(valor) for valor in ids)
 
 def exibir_conteudo_ficha(row, show_criteria=True):
     """Exibe o conteúdo detalhado de uma ficha de ativo, com opção de mostrar critérios."""
@@ -220,6 +212,7 @@ def exibir_conteudo_ficha(row, show_criteria=True):
                 st.markdown(f"""<div class="estudo-card">
                     <div class="estudo-badge">Estudo {i_e}{ano_s}</div>
                     {"<div style='font-size:12px;color:#8B949E;margin-bottom:3px'><b>Fonte:</b> " + str(est.get('fonte','')) + "</div>" if est.get('fonte') else ""}
+                    {"<div style='font-size:11px;color:#8B949E;margin-bottom:3px'><b>Registros de origem:</b> " + str(est.get('ids_origem','')) + "</div>" if est.get('ids_origem') else ""}
                     {"<div class='abnt-box'>" + str(est.get('referencia_abnt','')) + "</div>" if est.get('referencia_abnt') else ""}
                     {"<div style='margin-top:7px'><a href='" + str(est.get('link')) + "' target='_blank' style='color:#58a6ff;font-size:12px;'>🔗 Acessar trabalho completo</a></div>" if est.get('link') else ""}
                 </div>""", unsafe_allow_html=True)
@@ -227,67 +220,15 @@ def exibir_conteudo_ficha(row, show_criteria=True):
 # -------------------------------------------------
 # CARREGAMENTO
 # -------------------------------------------------
-@st.cache_resource
-def obter_conexao_postgres():
-    database_url = os.getenv('DATABASE_URL')
-    if not database_url:
-        try:
-            database_url = st.secrets['DATABASE_URL']
-        except Exception:
-            database_url = None
-    if not database_url:
-        raise RuntimeError('DATABASE_URL não foi configurada.')
-    return create_engine(database_url, pool_pre_ping=True)
-
-
-def carregar_tabelas_postgres():
-    engine = obter_conexao_postgres()
-    estudos = pd.read_sql_query(
-        'SELECT * FROM estudos_igs ORDER BY id', engine)
-    concedidas = pd.read_sql_query(
-        'SELECT * FROM igs_concedidas ORDER BY id', engine)
-    return estudos, concedidas
-
-
-def auditar_estudos(df_raw, df_ativos=None):
-    """Resumo temporário da planilha para verificar consistência de títulos e n_estudos."""
-    if df_raw is None or df_raw.empty:
-        return pd.DataFrame(columns=['nome_produto','contagem_por_titulo','soma_n_estudos_por_ativo','diverge'])
-
-    base = df_raw.copy()
-    base['nome_produto'] = base['nome_produto'].astype(str).str.strip()
-    base = base[base['nome_produto'] != '']
-
-    contagens_titulo = base.groupby('nome_produto').size().rename('contagem_por_titulo')
-
-    if df_ativos is not None and not df_ativos.empty:
-        ativos = df_ativos[['nome_produto', 'n_estudos']].copy()
-        ativos['nome_produto'] = ativos['nome_produto'].astype(str).str.strip()
-        ativos = ativos[ativos['nome_produto'] != '']
-        soma_por_ativo = ativos.groupby('nome_produto')['n_estudos'].sum().rename('soma_n_estudos_por_ativo')
-        auditoria = pd.concat([contagens_titulo, soma_por_ativo], axis=1).fillna(0).reset_index()
-        auditoria = auditoria.rename(columns={'index': 'nome_produto'})
-        auditoria['contagem_por_titulo'] = auditoria['contagem_por_titulo'].astype(int)
-        auditoria['soma_n_estudos_por_ativo'] = auditoria['soma_n_estudos_por_ativo'].astype(int)
-        auditoria['diverge'] = auditoria['contagem_por_titulo'] != auditoria['soma_n_estudos_por_ativo']
-        auditoria = auditoria.sort_values(['diverge', 'nome_produto'], ascending=[False, True]).reset_index(drop=True)
-        return auditoria
-
-    resumo = contagens_titulo.reset_index().rename(columns={'index': 'nome_produto'})
-    resumo['contagem_por_titulo'] = resumo['contagem_por_titulo'].astype(int)
-    resumo['soma_n_estudos_por_ativo'] = 0
-    resumo['diverge'] = False
-    return resumo
-
-
 @st.cache_data
 def carregar_dados():
     try:
-        df, df_of = carregar_tabelas_postgres()
+        # Lê a primeira aba da planilha, independente do nome
+        df = pd.read_excel("base_de_dados_IGs.xlsx", sheet_name=0)
         ausentes = [c for c in COLUNAS_ESPERADAS if c not in df.columns]
         if ausentes:
             st.error(f"⚠️ Colunas ausentes: {ausentes}")
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            return pd.DataFrame(), pd.DataFrame()
 
         df = df[df['nome_produto'].astype(str).str.lower() != 'nome_produto'].copy()
         df = df.dropna(subset=['nome_produto']).copy()
@@ -296,9 +237,9 @@ def carregar_dados():
         df['macro_tipo']       = df['tipo_produto'].apply(macro_tipo)
         df['macro_modalidade'] = df['modalidade_ig'].apply(macro_modalidade)
         df['territorio_norm']  = df['territorio_identidade'].apply(normalizar_territorio)
+        df['estudo_id'] = df.apply(gerar_estudo_id, axis=1)
         if 'ano' in df.columns:
             df['ano'] = pd.to_numeric(df['ano'], errors='coerce')
-        df['estudo_key'] = df.apply(normalizar_estudo_chave, axis=1)
 
         def agregar(grupo):
             # --- Lógica para criar um nome final descritivo ---
@@ -333,24 +274,19 @@ def carregar_dados():
 
             principal['_p'] = principal.apply(priority_score, axis=1)
             base = principal.sort_values('_p', ascending=False).iloc[0]
-            estudos, vistos = [], set()
-            for _, row in grupo.iterrows():
-                chave = normalizar_estudo_chave(row)
-                if chave is None:
-                    continue
-
-                if chave in vistos:
-                    continue
-
-                vistos.add(chave)
-
-                ref   = limpar(row.get('referencia_abnt'))
-                link  = limpar(row.get('link'))
-                fonte = limpar(row.get('fonte_dados'))
-                ano   = row.get('ano')
-                estudos.append({'ano': int(ano) if pd.notna(ano) else None,
-                                'fonte': fonte, 'link': link, 'referencia_abnt': ref,
-                                'titulo_trabalho': limpar(row.get('titulo_trabalho') or row.get('nome_produto'))})
+            estudos = []
+            linhas_com_estudo = grupo.dropna(subset=['estudo_id'])
+            for estudo_id, linhas_estudo in linhas_com_estudo.groupby('estudo_id', sort=False):
+                registro = linhas_estudo.iloc[0]
+                ano = registro.get('ano')
+                ids_origem = [valor for valor in linhas_estudo.get('id', pd.Series(dtype=object))
+                              if pd.notna(valor)]
+                estudos.append({'estudo_id': estudo_id,
+                                'ano': int(ano) if pd.notna(ano) else None,
+                                'fonte': limpar(registro.get('fonte_dados')),
+                                'link': limpar(registro.get('link')),
+                                'referencia_abnt': limpar(registro.get('referencia_abnt')),
+                                'ids_origem': formatar_ids_origem(ids_origem)})
             return pd.Series({
                 'nome_produto':          nome_final, # Usa o nome do grupo ou o nome construído
                 'chave_agrupamento':     grupo.name,
@@ -376,26 +312,42 @@ def carregar_dados():
 
         # Cria uma chave de agrupamento mais inteligente
         # Remove parênteses e espaços extras para agrupar variações do mesmo nome
-        df['chave_agrupamento'] = df['nome_produto'].map(normalizar_chave_produto)
+        df['chave_agrupamento'] = df['nome_produto'].str.split('(').str[0].str.strip()
 
         df_ag = (df.groupby('chave_agrupamento', sort=False)
                    .apply(agregar).reset_index(drop=True))
 
-        df_of = df_of.dropna(subset=['nome_produto']).copy()
-        if 'geometria_espacial' in df_of.columns:
-            df_of[['latitude','longitude']] = df_of['geometria_espacial'].apply(
-                lambda v: pd.Series(extrair_coords(v)))
-        if 'modalidade_ig' in df_of.columns:
-            df_of['macro_modalidade'] = df_of['modalidade_ig'].apply(macro_modalidade)
-        if 'ano' in df_of.columns:
-            df_of['ano'] = pd.to_numeric(df_of['ano'], errors='coerce')
+        # -------------------------------------------------
+        # Aba com as IGs oficiais concedidas no INPI
+        # -------------------------------------------------
+        df_of = pd.DataFrame()
+        try:
+            df_of = pd.read_excel("base_de_dados_IGs.xlsx", sheet_name="BD_IGs_concedida_analise")
+            df_of = df_of.dropna(subset=['nome_produto']).copy()
+            if 'geometria_espacial' in df_of.columns:
+                df_of[['latitude','longitude']] = df_of['geometria_espacial'].apply(
+                    lambda v: pd.Series(extrair_coords(v)))
+            if 'modalidade_ig' in df_of.columns:
+                df_of['macro_modalidade'] = df_of['modalidade_ig'].apply(macro_modalidade)
+            if 'ano' in df_of.columns:
+                df_of['ano'] = pd.to_numeric(df_of['ano'], errors='coerce')
+        except Exception as e:
+            st.warning(f"⚠️ Não foi possível ler a aba 'BD_IGs_concedida_analise': {e}")
 
         return df, df_ag, df_of
-    except RuntimeError as e:
-        st.error(f"❌ Configuração do banco: {e}")
+    except FileNotFoundError:
+        st.error("❌ Arquivo 'base_de_dados_IGs.xlsx' não encontrado.")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    except PermissionError:
+        st.error("❌ Permissão Negada para ler o arquivo 'base_de_dados_IGs.xlsx'.")
+        st.warning("**SOLUÇÃO:** Por favor, **feche o arquivo no Microsoft Excel** e recarregue esta página.")
+        st.info("O Excel bloqueia o arquivo enquanto está aberto, impedindo a leitura pelo dashboard.")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    except ValueError as e:
+        st.error(f"❌ Erro de Valor na planilha: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     except Exception as e:
-        st.error(f"❌ Não foi possível consultar o PostgreSQL: {e}")
+        st.error(f"❌ Erro inesperado ao carregar os dados: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 @st.cache_data
@@ -415,14 +367,7 @@ def carregar_territorios():
         return gpd.GeoDataFrame()
 
 df_raw, df_base, df_oficial = carregar_dados()
-
-if df_raw.empty and df_base.empty and df_oficial.empty:
-    st.warning(
-        "Nenhuma planilha foi carregada. A base não pôde ser acessada no repositório GitHub oficial."
-    )
-    st.stop()
-
-territorios_ba = carregar_territorios()
+territorios_ba   = carregar_territorios()
 
 # Calcula IGs oficiais (Concedidas) a partir da aba dedicada
 # 'BD_IGs_concedida_analise', que é a fonte de verdade para esse status
@@ -431,12 +376,6 @@ if not igs_oficiais.empty and 'status_diagnostico' in igs_oficiais.columns:
     n_concedidas = len(igs_oficiais[igs_oficiais['status_diagnostico'].str.contains('Concedid', na=False, case=False)])
 else:
     n_concedidas = 0
-
-concedidas = pd.DataFrame()
-if not igs_oficiais.empty and 'status_diagnostico' in igs_oficiais.columns:
-    concedidas = igs_oficiais[igs_oficiais['status_diagnostico'].str.contains('Concedid', na=False, case=False)].copy()
-    if 'nome_produto' in concedidas.columns:
-        concedidas = concedidas.sort_values('nome_produto').reset_index(drop=True)
 
 def selecionar_coluna_nome_ti(gdf):
     """Escolhe a coluna textual do nome do território, evitando códigos numéricos."""
@@ -517,14 +456,6 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
     padding:12px 16px;margin-bottom:8px;border-left:4px solid #56d364;}
 .about-box{background:#161B22;border:1px solid #30363d;border-radius:12px;
     padding:20px 24px;font-size:13px;color:#ccc;line-height:1.7;}
-.dashboard-title{display:block !important;font-family:Sora,sans-serif;font-size:22px;
-    font-weight:700 !important;color:#F2B705 !important;line-height:1.25;
-    opacity:1 !important;visibility:visible !important;}
-.dashboard-subtitle{display:block;color:#4b5563;font-size:12px;
-    line-height:1.5;white-space:normal;overflow-wrap:anywhere;}
-@media (prefers-color-scheme: dark){
-    .dashboard-subtitle{color:var(--text-color,#8B949E);}
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -579,7 +510,9 @@ with st.sidebar:
                 df_filtrado['municipios_abrangidos'].astype(str).str.contains(busca,case=False,na=False)]
 
         st.divider()
-        t_est = contar_estudos_unicos(df_raw, df_filtrado['chave_agrupamento'].dropna().unique()) if not df_filtrado.empty else 0
+        grupos_filtrados = set(df_filtrado['chave_agrupamento'])
+        t_est = (int(df_raw[df_raw['chave_agrupamento'].isin(grupos_filtrados)]['estudo_id'].nunique())
+             if not df_filtrado.empty else 0)
         st.caption(f"**{len(df_filtrado)}** ativos · **{t_est}** estudos")
 
         if st.button("🗑️ Limpar filtros"):
@@ -591,11 +524,11 @@ with st.sidebar:
 # -------------------------------------------------
 st.markdown("""
 <div style='margin-bottom:4px;'>
-    <span class='dashboard-title'>
-    Mapeia IG Bahia
+  <span style='font-family:Sora,sans-serif;font-size:22px;font-weight:700;color:#E6EDF3;'>
+    🛡️ Diagnóstico de Indicações Geográficas – Bahia
   </span><br>
-    <span class='dashboard-subtitle'>
-    Mapeia IG Bahia - Plataforma de Inteligência Territorial para Indicações Geográficas &nbsp;·&nbsp; PROFNIT / UFRB 2026
+  <span style='color:#8B949E;font-size:12px;'>
+    Mapeamento de potenciais IGs nos 27 Territórios de Identidade &nbsp;·&nbsp; PROFNIT / UFRB 2026
   </span>
 </div>
 """, unsafe_allow_html=True)
@@ -604,10 +537,8 @@ st.divider()
 # -------------------------------------------------
 # KPIs
 # -------------------------------------------------
-# --- Calcula os totais usando a contagem real de estudos trabalhados ---
-# A soma por produto inflava o número porque os mesmos estudos aparecem em
-# múltiplas linhas do mesmo ativo e/ou em variações de preenchimento.
-total_estudos = contar_estudos_unicos(df_raw) if not df_raw.empty else 0
+# --- Calcula os totais a partir da base de dados completa (df_base) ---
+total_estudos = int(df_raw['estudo_id'].nunique()) if not df_raw.empty else 0
 n_multi_estudos = len(df_base[df_base['n_estudos'] > 1]) if not df_base.empty else 0
 n_ti_coberto = len(territorios_cobertos)
 cobertura_pct = round(n_ti_coberto / 27 * 100)
@@ -676,10 +607,10 @@ with k8:
     linhas_top3 = ""
     for i, (nome, qtd) in enumerate(top3_estudos, start=1):
         nome_curto = nome if len(nome) <= 20 else nome[:18] + "…"
-        linhas_top3 += (f"<div style='display:flex;justify-content:space-between;gap:10px;"
+        linhas_top3 += (f"<div style='display:flex;justify-content:space-between;"
                          f"align-items:center;font-size:10px;margin-top:2px;line-height:1.2;' title='{nome}'>"
-                 f"<span style='color:#ccc;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>{i}º · {nome_curto}</span>"
-                         f"<span style='color:#F2B705;font-weight:600;flex-shrink:0;white-space:nowrap;'>· {int(qtd)} estudos</span></div>")
+                         f"<span style='color:#ccc'>{i}º · {nome_curto}</span>"
+                         f"<span style='color:#F2B705;font-weight:600;flex-shrink:0;margin-left:6px;'>{int(qtd)}</span></div>")
     if not linhas_top3:
         linhas_top3 = "<div style='font-size:10px;color:#6E7681;margin-top:2px;'>Sem dados</div>"
     st.markdown(f"""<div class="kpi-card" style="text-align:left;">
@@ -708,12 +639,7 @@ with aba1:
                 unsafe_allow_html=True)
     st.caption("🟡 Territórios com ativos filtrados (intensidade = quantidade)")
 
-    mapa = folium.Map(
-        location=[-12.5, -41.5],
-        zoom_start=6,
-        tiles="OpenStreetMap",
-        attr="© OpenStreetMap contributors"
-    )
+    mapa = folium.Map(location=[-12.5,-41.5], zoom_start=6, tiles="cartodbpositron")
 
     # Conjunto de territórios cobertos (nomes originais) para destacar
     ti_com = set()
@@ -979,8 +905,19 @@ with aba3:
             st.download_button("⬇️ Baixar dados filtrados (.csv)",
                 data=df_filtrado[cols_e].to_csv(index=False).encode('utf-8'),
                 file_name="igs_bahia_filtrado.csv", mime="text/csv")
+        if not df_raw.empty:
+            st.markdown("**Rastreabilidade da deduplicação bibliográfica**")
+            st.caption("Cada linha preserva o registro original; registros equivalentes compartilham o mesmo estudo_id.")
+            cols_rastreio = ['id','estudo_id','nome_produto','titulo_trabalho','ano',
+                             'referencia_abnt','link']
+            cols_rastreio = [c for c in cols_rastreio if c in df_raw.columns]
+            df_rastreio = df_raw[cols_rastreio].sort_values(['estudo_id','id'], na_position='last')
+            st.dataframe(df_rastreio, use_container_width=True, hide_index=True)
+            st.download_button("⬇️ Baixar rastreabilidade bibliográfica (.csv)",
+                data=df_rastreio.to_csv(index=False).encode('utf-8'),
+                file_name="rastreabilidade_estudos_igs_bahia.csv", mime="text/csv")
 
-# =================================================
+# =============q====================================
 # ABA 4 – IGs REGISTRADAS (com territórios numerados)
 # =================================================
 with aba4:
@@ -989,26 +926,21 @@ with aba4:
     st.caption("Fonte: INPI – Instituto Nacional da Propriedade Industrial (2025)")
     st.divider()
 
-    if concedidas.empty:
-        st.info("Ainda não há registros de IGs concedidas disponíveis nessa base. Isso pode acontecer quando a aba de origem está ausente ou sem a coluna esperada.")
-    else:
-        st.markdown(f"### ✅ Concedidas ({len(concedidas)})")
-        col_c1, col_c2 = st.columns(2)
-        for i, (_, ig) in enumerate(concedidas.iterrows()):
-            col_atual = col_c1 if i % 2 == 0 else col_c2
-            with col_atual:
-                if 'macro_modalidade' in ig.index and ig.get('macro_modalidade') == 'DO':
-                    tag_m = '<span class="tag-do">DO</span>'
-                else:
-                    tag_m = '<span class="tag-ip">IP</span>'
-                territorio = ig.get('territorio_identidade', '')
-                territorio_fmt = formatar_ti(territorio) if territorio in NUMERACAO_TI else territorio
-                ano_str = f"Concedida em {int(ig['ano'])}" if pd.notna(ig.get('ano')) else 'Concedida'
-                st.markdown(f"""<div class="ig-card-ok">
-                    <b style='color:#E6EDF3;font-size:13px'>{ig.get('nome_produto', '')}</b><br>
-                    {tag_m} &nbsp;<span style='color:#6E7681;font-size:12px'>{ano_str}</span><br>
-                    <span style='color:#8B949E;font-size:12px'>📍 {territorio_fmt}</span>
-                </div>""", unsafe_allow_html=True)
+    concedidas = igs_oficiais[igs_oficiais['status_diagnostico'].str.contains('Concedid', na=False, case=False)].sort_values('nome_produto')
+
+    st.markdown(f"### ✅ Concedidas ({len(concedidas)})")
+    col_c1, col_c2 = st.columns(2)
+    for i, (_, ig) in enumerate(concedidas.iterrows()):
+        col_atual = col_c1 if i % 2 == 0 else col_c2
+        with col_atual:
+            tag_m = '<span class="tag-do">DO</span>' if ig['macro_modalidade']=='DO' else '<span class="tag-ip">IP</span>'
+            territorio_fmt = formatar_ti(ig['territorio_identidade']) if ig['territorio_identidade'] in NUMERACAO_TI else ig['territorio_identidade']
+            ano_str = f"Concedida em {int(ig['ano'])}" if pd.notna(ig.get('ano')) else 'Concedida'
+            st.markdown(f"""<div class="ig-card-ok">
+                <b style='color:#E6EDF3;font-size:13px'>{ig['nome_produto']}</b><br>
+                {tag_m} &nbsp;<span style='color:#6E7681;font-size:12px'>{ano_str}</span><br>
+                <span style='color:#8B949E;font-size:12px'>📍 {territorio_fmt}</span>
+            </div>""", unsafe_allow_html=True)
 
     st.divider()
     total_pot = n_potenciais
