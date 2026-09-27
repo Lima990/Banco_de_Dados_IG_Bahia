@@ -6,6 +6,9 @@ Uso:
 """
 
 import sys
+import hashlib
+import re
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -13,7 +16,7 @@ from sqlalchemy import create_engine, text
 
 
 COLUNAS_ESTUDOS = [
-    'id', 'nome_produto', 'territorio_identidade', 'municipios_abrangidos',
+    'origem_id', 'nome_produto', 'territorio_identidade', 'municipios_abrangidos',
     'tipo_produto', 'modalidade_ig', 'singularidade', 'tradicao_historica',
     'vinculo_territorial', 'viabilidade_economica', 'atores_chave',
     'geometria_espacial', 'fonte_dados', 'titulo_trabalho', 'link', 'ano',
@@ -33,12 +36,45 @@ def valor_texto(valor):
     return texto or None
 
 
+def normalizar_texto_bibliografico(valor):
+    texto = valor_texto(valor)
+    if not texto:
+        return ''
+    texto = unicodedata.normalize('NFKD', texto.lower())
+    texto = ''.join(char for char in texto if not unicodedata.combining(char))
+    return re.sub(r'[^a-z0-9]+', ' ', texto).strip()
+
+
+def valor_id_origem(valor):
+    if pd.isna(valor):
+        return None
+    try:
+        numero = float(valor)
+        if numero.is_integer():
+            return str(int(numero))
+    except (TypeError, ValueError):
+        pass
+    return str(valor).strip() or None
+
+
 def chave_estudo(linha):
-    titulo = valor_texto(linha.get('titulo_trabalho')) or valor_texto(linha.get('nome_produto'))
-    link = valor_texto(linha.get('link'))
-    abnt = valor_texto(linha.get('referencia_abnt'))
-    partes = tuple((valor or '').lower() for valor in (titulo, link, abnt))
-    return '||'.join(partes) if any(partes) else None
+    titulo = normalizar_texto_bibliografico(linha.get('titulo_trabalho'))
+    ano = pd.to_numeric(linha.get('ano'), errors='coerce')
+    referencia = normalizar_texto_bibliografico(linha.get('referencia_abnt'))
+    link = normalizar_texto_bibliografico(linha.get('link'))
+
+    if titulo:
+        ano_chave = str(int(ano)) if pd.notna(ano) else ''
+        chave = f'titulo:{titulo}|ano:{ano_chave}'
+    elif referencia:
+        chave = f'referencia:{referencia}'
+    elif link:
+        chave = f'link:{link}'
+    else:
+        return None
+
+    digest = hashlib.sha1(chave.encode('utf-8')).hexdigest()[:12]
+    return f'EST-{digest}'
 
 
 def chave_produto(valor):
@@ -62,6 +98,7 @@ def main():
 
     estudos = estudos[estudos['nome_produto'].notna()].copy()
     concedidas = concedidas[concedidas['nome_produto'].notna()].copy()
+    estudos['origem_id'] = estudos['id'].map(valor_id_origem)
     estudos['estudo_key'] = estudos.apply(chave_estudo, axis=1)
     estudos['chave_agrupamento'] = estudos['nome_produto'].map(chave_produto)
     estudos['ano'] = pd.to_numeric(estudos.get('ano'), errors='coerce').astype('Int64')

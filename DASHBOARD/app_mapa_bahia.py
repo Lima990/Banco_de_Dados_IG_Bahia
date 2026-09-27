@@ -357,7 +357,10 @@ def carregar_dados():
             for estudo_key, linhas_estudo in linhas_com_estudo.groupby('estudo_key', sort=False):
                 registro = linhas_estudo.iloc[0]
                 ano = registro.get('ano')
-                coluna_id_origem = ('origem_id' if 'origem_id' in linhas_estudo.columns else 'id')
+                coluna_id_origem = (
+                    'origem_id' if 'origem_id' in linhas_estudo.columns
+                    and linhas_estudo['origem_id'].notna().any() else 'id'
+                )
                 ids_origem = [valor for valor in linhas_estudo[coluna_id_origem] if pd.notna(valor)]
                 estudos.append({'estudo_id': estudo_key,
                                 'ano': int(ano) if pd.notna(ano) else None,
