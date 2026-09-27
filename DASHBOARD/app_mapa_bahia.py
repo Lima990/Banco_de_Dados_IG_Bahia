@@ -172,7 +172,7 @@ def formatar_ids_origem(ids):
 
 
 def contar_estudos_unicos(df_raw_local, nomes_produto=None):
-    """Conta estudos únicos por título+link+ABNT, opcionalmente filtrados por produto."""
+    """Conta IDs bibliográficos distintos, opcionalmente filtrados por produto."""
     if df_raw_local is None or df_raw_local.empty:
         return 0
 
