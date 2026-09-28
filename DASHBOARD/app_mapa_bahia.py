@@ -1100,8 +1100,8 @@ with aba5:
         🎓 <b>Orientador:</b> Dr. Luís Oscar Silva Martins<br>
         🏛️ <b>Instituição:</b> UFRB / PROFNIT<br>
         📅 <b>Período:</b> 2025–2026<br>
-        🔗 <b>Projeto Integrador:</b> IGs e Marcas Coletivas e Inovação Associada
-        ao Desenvolvimento Sustentável<br><br>
+        🔗 <b>Projeto Vinculado:</b> Indicações Geográficas no Estado da Bahia: mapeamento, potencialidades e planejamento estratégico
+        ao Desenvolvimento Sustentável (FAPESB/CNPq)<br><br>
         <b style='color:#F2B705'>Critérios de Seleção (INPI)</b><br><br>
         ⭐ Singularidade do produto<br>
         📜 Tradição histórica e cultural<br>
