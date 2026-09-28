@@ -610,10 +610,10 @@ with st.sidebar:
 st.markdown("""
 <div style='margin-bottom:4px;'>
     <span class='dashboard-title'>
-    Mapeia IG Bahia
+    MAPIG - BA
   </span><br>
     <span class='dashboard-subtitle'>
-    Mapeia IG Bahia - Plataforma de Inteligência Territorial para Indicações Geográficas &nbsp;·&nbsp; PROFNIT / UFRB 2026
+    MAPIG - BA (Mapa de Potenciais Indicações Geográficas da Bahia) - &nbsp;·&nbsp; PROFNIT / UFRB 2026
   </span>
 </div>
 """, unsafe_allow_html=True)
